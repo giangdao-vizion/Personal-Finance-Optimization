@@ -41,48 +41,19 @@
     <section class="card income-card" aria-labelledby="income-heading">
       <h2 id="income-heading" class="card-title">Thu nhập tháng</h2>
       <label class="field">
-        <span class="field-label">Số tiền</span>
-        <span class="field-hint">Nhập theo triệu hoặc trăm nghìn — gạt nút bên dưới để đổi đơn vị (mặc định: triệu).</span>
-        <div class="amount-stack">
-          <div class="amount-input-wrap">
-            <span id="income-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
-            <input
-              type="text"
-              id="monthly-income"
-              class="amount-input"
-              inputmode="decimal"
-              autocomplete="off"
-              enterkeyhint="done"
-              placeholder="Ví dụ: 25"
-            />
-          </div>
-          <div
-            class="unit-slider"
-            id="income-unit-slider"
-            role="radiogroup"
-            aria-label="Đơn vị nhập thu nhập"
-          >
-            <input
-              type="radio"
-              name="income-unit"
-              id="income-unit-trieu"
-              value="trieu"
-              class="unit-slider-input"
-              checked
-            />
-            <input
-              type="radio"
-              name="income-unit"
-              id="income-unit-tram"
-              value="tram-nghin"
-              class="unit-slider-input"
-            />
-            <div class="unit-slider-pill">
-              <span class="unit-slider-knob" aria-hidden="true"></span>
-              <label for="income-unit-trieu" class="unit-slider-label">Triệu</label>
-              <label for="income-unit-tram" class="unit-slider-label">Trăm nghìn</label>
-            </div>
-          </div>
+        <span class="field-label">Số tiền (nghìn đồng)</span>
+        <span class="field-hint">Mỗi đơn vị = 1.000 ₫. Ví dụ nhập <strong>1000</strong> = 1 triệu; <strong>25000</strong> = 25 triệu. Có thể dán số đủ như 25.000.000.</span>
+        <div class="amount-input-wrap">
+          <span id="income-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
+          <input
+            type="text"
+            id="monthly-income"
+            class="amount-input"
+            inputmode="decimal"
+            autocomplete="off"
+            enterkeyhint="done"
+            placeholder="Ví dụ: 25000 (= 25 triệu)"
+          />
         </div>
       </label>
     </section>
@@ -101,47 +72,18 @@
           <input type="text" id="expense-name" maxlength="120" enterkeyhint="next" placeholder="Có thể để trống" />
         </label>
         <label class="field">
-          <span class="field-label">Số tiền</span>
-          <div class="amount-stack">
-            <div class="amount-input-wrap">
-              <span id="expense-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
-              <input
-                type="text"
-                id="expense-amount"
-                class="amount-input"
-                inputmode="decimal"
-                required
-                enterkeyhint="done"
-                placeholder="Ví dụ: 1,5"
-              />
-            </div>
-            <div
-              class="unit-slider"
-              id="expense-unit-slider"
-              role="radiogroup"
-              aria-label="Đơn vị nhập số tiền chi"
-            >
-              <input
-                type="radio"
-                name="expense-unit"
-                id="expense-unit-trieu"
-                value="trieu"
-                class="unit-slider-input"
-                checked
-              />
-              <input
-                type="radio"
-                name="expense-unit"
-                id="expense-unit-tram"
-                value="tram-nghin"
-                class="unit-slider-input"
-              />
-              <div class="unit-slider-pill">
-                <span class="unit-slider-knob" aria-hidden="true"></span>
-                <label for="expense-unit-trieu" class="unit-slider-label">Triệu</label>
-                <label for="expense-unit-tram" class="unit-slider-label">Trăm nghìn</label>
-              </div>
-            </div>
+          <span class="field-label">Số tiền (nghìn đồng)</span>
+          <div class="amount-input-wrap">
+            <span id="expense-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
+            <input
+              type="text"
+              id="expense-amount"
+              class="amount-input"
+              inputmode="decimal"
+              required
+              enterkeyhint="done"
+              placeholder="Ví dụ: 1500 (= 1,5 triệu)"
+            />
           </div>
         </label>
         <button type="submit" class="btn btn-primary btn-block">Thêm vào danh sách</button>

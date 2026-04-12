@@ -210,12 +210,6 @@ body {
   color: var(--muted2);
 }
 
-.amount-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-}
-
 .amount-input-wrap {
   display: flex;
   flex-direction: column;
@@ -241,85 +235,8 @@ body {
   display: none !important;
 }
 
-.amount-stack .amount-input {
+.amount-input-wrap .amount-input {
   width: 100%;
-}
-
-/* Slider Triệu ↔ Trăm nghìn */
-.unit-slider-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.unit-slider {
-  position: relative;
-}
-
-.unit-slider-pill {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  min-height: var(--tap-min);
-}
-
-.unit-slider-knob {
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
-  width: calc(50% - 6px);
-  border-radius: 8px;
-  background: var(--accent-soft);
-  border: 1px solid rgba(52, 195, 160, 0.35);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  transition: left 0.22s ease;
-  pointer-events: none;
-}
-
-.unit-slider-input[value="tram-nghin"]:checked ~ .unit-slider-pill .unit-slider-knob {
-  left: calc(50% + 2px);
-}
-
-.unit-slider-label {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: calc(var(--tap-min) - 8px);
-  padding: 0 0.35rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: color 0.15s ease;
-}
-
-.unit-slider:has(.unit-slider-input[value="trieu"]:checked) .unit-slider-label[for$="unit-trieu"],
-.unit-slider:has(.unit-slider-input[value="tram-nghin"]:checked) .unit-slider-label[for$="unit-tram"] {
-  color: var(--accent-text);
-}
-
-.unit-slider-label:active {
-  opacity: 0.85;
-}
-
-.unit-slider:focus-within .unit-slider-pill {
-  border-color: rgba(52, 195, 160, 0.45);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 input[type="text"],

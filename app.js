@@ -25,15 +25,8 @@
     categoryMap[c.id] = c.label;
   });
 
-  var MONEY_UNITS = {
-    trieu: 1000000,
-    "tram-nghin": 100000,
-  };
-
-  var PLACEHOLDER_BY_UNIT = {
-    trieu: "Ví dụ: 25 hoặc 1,5",
-    "tram-nghin": "Ví dụ: 250 (= 25 triệu)",
-  };
+  /** 1 đơn vị nhập = 1 nghìn đồng (1.000 ₫). */
+  var VND_PER_INPUT_UNIT = 1000;
 
   function parseMoneyInput(str) {
     if (str == null || String(str).trim() === "") return 0;
@@ -45,34 +38,31 @@
     return isNaN(n) ? 0 : Math.round(n);
   }
 
-  /** Hệ số nhập (triệu / trăm ngàn): cho phép 2,5 hoặc 2.5 — không dùng dấu . phân cách hàng nghìn. */
-  function parseCoefficientForScaledUnit(str) {
+  /** Hệ số nhập theo nghìn: 1,5 hoặc 1.5 → không dùng dấu . phân tách hàng nghìn. */
+  function parseNganCoefficient(str) {
     if (str == null || String(str).trim() === "") return 0;
     var s = String(str).trim().replace(/\s/g, "").replace(",", ".");
     var n = parseFloat(s);
     return isNaN(n) ? 0 : n;
   }
 
-  function parseMoneyToVND(str, unitKey) {
+  function parseMoneyToVND(str) {
     var s = String(str || "").trim();
     if (!s) return 0;
     if (looksLikeFormattedVND(s)) return parseMoneyInput(s);
-    var mult = MONEY_UNITS[unitKey];
-    if (mult == null) mult = MONEY_UNITS.trieu;
-    var coef = parseCoefficientForScaledUnit(s);
-    return Math.round(coef * mult);
+    return Math.round(parseNganCoefficient(s) * VND_PER_INPUT_UNIT);
   }
 
-  /** Hiển thị lại ô thu nhập theo hệ số triệu sau khi lưu. */
-  function formatAsTrieuCoefficient(vnd) {
+  /** Hiển thị ô thu nhập theo nghìn sau khi lưu. */
+  function formatAsNganDisplay(vnd) {
     if (!vnd || vnd <= 0) return "";
-    var t = vnd / 1000000;
-    var rounded = Math.round(t * 1000) / 1000;
-    if (Math.abs(rounded - Math.round(rounded)) < 1e-6) return String(Math.round(rounded));
+    var k = vnd / VND_PER_INPUT_UNIT;
+    if (Math.abs(k - Math.round(k)) < 1e-6) return String(Math.round(k));
+    var rounded = Math.round(k * 1000) / 1000;
     return rounded.toFixed(3).replace(/\.?0+$/, "").replace(".", ",");
   }
 
-  /** Tránh nhầm "1.500.000" (VNĐ) khi đã chọn Triệu — parseFloat chỉ đọc được 1.5. */
+  /** Chuỗi kiểu 25.000.000 = VNĐ đủ (dán từ nơi khác). */
   function looksLikeFormattedVND(str) {
     return /^\d{1,3}(\.\d{3})+$/.test(String(str).replace(/\s/g, ""));
   }
@@ -117,12 +107,10 @@
 
   var elIncome = document.getElementById("monthly-income");
   var elIncomePreview = document.getElementById("income-amount-preview");
-  var elIncomeUnitSlider = document.getElementById("income-unit-slider");
   var elCategory = document.getElementById("expense-category");
   var elName = document.getElementById("expense-name");
   var elAmount = document.getElementById("expense-amount");
   var elExpensePreview = document.getElementById("expense-amount-preview");
-  var elExpenseUnitSlider = document.getElementById("expense-unit-slider");
   var elForm = document.getElementById("expense-form");
   var elTbody = document.getElementById("expense-tbody");
   var elEmpty = document.getElementById("empty-state");
@@ -147,31 +135,14 @@
     });
   }
 
-  function getRadioGroupValue(name) {
-    var el = document.querySelector(
-      'input[type="radio"][name="' + name + '"]:checked'
-    );
-    return el && el.value ? el.value : "trieu";
-  }
-
-  function setIncomeUnitTrieu() {
-    var r = document.getElementById("income-unit-trieu");
-    if (r) r.checked = true;
-  }
-
-  function syncAmountPlaceholder(inputEl, unitKey) {
-    var ph = PLACEHOLDER_BY_UNIT[unitKey] || PLACEHOLDER_BY_UNIT.trieu;
-    inputEl.placeholder = ph;
-  }
-
   function formatPreviewPlainVND(vnd) {
     if (!vnd || vnd <= 0) return "";
     return vnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) + " \u20ab";
   }
 
-  function updateAmountPreview(inputEl, previewEl, radioName) {
+  function updateAmountPreview(inputEl, previewEl) {
     if (!previewEl) return;
-    var vnd = parseMoneyToVND(inputEl.value, getRadioGroupValue(radioName));
+    var vnd = parseMoneyToVND(inputEl.value);
     if (vnd > 0) {
       previewEl.textContent = "= " + formatPreviewPlainVND(vnd);
       previewEl.removeAttribute("hidden");
@@ -183,34 +154,14 @@
     }
   }
 
-  function bindAmountPreview(inputEl, previewEl, radioName) {
+  function bindAmountPreview(inputEl, previewEl) {
     if (!inputEl || !previewEl) return;
     function tick() {
-      updateAmountPreview(inputEl, previewEl, radioName);
+      updateAmountPreview(inputEl, previewEl);
     }
     inputEl.addEventListener("input", tick);
     inputEl.addEventListener("focus", tick);
     tick();
-  }
-
-  function bindUnitSlider(container, inputEl, previewEl, radioName) {
-    if (!container) return;
-    var radios = container.querySelectorAll('input[type="radio"]');
-    function currentUnit() {
-      var n = radios[0] && radios[0].name;
-      return n ? getRadioGroupValue(n) : "trieu";
-    }
-    var name = radioName || (radios[0] && radios[0].name) || "";
-    function onChange() {
-      if (looksLikeFormattedVND(inputEl.value)) inputEl.value = "";
-      syncAmountPlaceholder(inputEl, currentUnit());
-      if (previewEl && name) updateAmountPreview(inputEl, previewEl, name);
-    }
-    radios.forEach(function (r) {
-      r.addEventListener("change", onChange);
-    });
-    syncAmountPlaceholder(inputEl, currentUnit());
-    if (previewEl && name) updateAmountPreview(inputEl, previewEl, name);
   }
 
   function normalizeExpenseRow(row) {
@@ -479,17 +430,12 @@
     persistAndRender();
   }
 
-  elIncome.value = formatAsTrieuCoefficient(state.income);
+  elIncome.value = formatAsNganDisplay(state.income);
 
   elIncome.addEventListener("blur", function () {
-    state.income = parseMoneyToVND(
-      elIncome.value,
-      getRadioGroupValue("income-unit")
-    );
-    elIncome.value = formatAsTrieuCoefficient(state.income);
-    setIncomeUnitTrieu();
-    syncAmountPlaceholder(elIncome, "trieu");
-    updateAmountPreview(elIncome, elIncomePreview, "income-unit");
+    state.income = parseMoneyToVND(elIncome.value);
+    elIncome.value = formatAsNganDisplay(state.income);
+    updateAmountPreview(elIncome, elIncomePreview);
     persistAndRender();
   });
 
@@ -501,16 +447,11 @@
   });
 
   function flushIncomeFromField() {
-    var v = parseMoneyToVND(
-      elIncome.value,
-      getRadioGroupValue("income-unit")
-    );
+    var v = parseMoneyToVND(elIncome.value);
     if (v !== state.income) {
       state.income = v;
-      elIncome.value = formatAsTrieuCoefficient(state.income);
-      setIncomeUnitTrieu();
-      syncAmountPlaceholder(elIncome, "trieu");
-      updateAmountPreview(elIncome, elIncomePreview, "income-unit");
+      elIncome.value = formatAsNganDisplay(state.income);
+      updateAmountPreview(elIncome, elIncomePreview);
       saveState(state);
     }
   }
@@ -522,10 +463,7 @@
 
   elForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
-    var amount = parseMoneyToVND(
-      elAmount.value,
-      getRadioGroupValue("expense-unit")
-    );
+    var amount = parseMoneyToVND(elAmount.value);
     if (amount <= 0) {
       elAmount.focus();
       return;
@@ -538,7 +476,7 @@
     });
     elName.value = "";
     elAmount.value = "";
-    updateAmountPreview(elAmount, elExpensePreview, "expense-unit");
+    updateAmountPreview(elAmount, elExpensePreview);
     persistAndRender();
     elAmount.focus();
   });
@@ -552,9 +490,7 @@
   });
 
   fillCategorySelect();
-  bindUnitSlider(elIncomeUnitSlider, elIncome, elIncomePreview, "income-unit");
-  bindUnitSlider(elExpenseUnitSlider, elAmount, elExpensePreview, "expense-unit");
-  bindAmountPreview(elIncome, elIncomePreview, "income-unit");
-  bindAmountPreview(elAmount, elExpensePreview, "expense-unit");
+  bindAmountPreview(elIncome, elIncomePreview);
+  bindAmountPreview(elAmount, elExpensePreview);
   persistAndRender();
 })();
