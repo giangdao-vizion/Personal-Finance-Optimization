@@ -64,6 +64,235 @@ body {
     max(1rem, env(safe-area-inset-left));
 }
 
+.screen[hidden] {
+  display: none !important;
+}
+
+.icon-svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.icon-svg-muted {
+  opacity: 0.55;
+  color: var(--muted);
+}
+
+/* —— Icon buttons —— */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  min-width: var(--tap-min);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  transition: background 0.15s, transform 0.08s;
+}
+
+.btn-icon:active {
+  transform: scale(0.96);
+}
+
+.btn-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-icon-ghost {
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+}
+
+.btn-icon-ghost:hover {
+  background: var(--surface-press);
+  color: var(--text);
+}
+
+.btn-icon-danger {
+  color: var(--danger);
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+}
+
+.btn-icon-danger:hover {
+  background: var(--danger-soft);
+}
+
+/* —— Home: năm + danh sách tháng —— */
+.year-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.year-nav-label {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.year-summary-grid {
+  margin-top: 0;
+}
+
+.month-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
+}
+
+.month-picker-label {
+  flex: 1;
+  min-width: 10rem;
+}
+
+.input-month {
+  width: 100%;
+  min-height: var(--tap-min);
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+.input-month:focus {
+  outline: none;
+  border-color: rgba(52, 195, 160, 0.45);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.btn-open-month {
+  min-height: var(--tap-min);
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+}
+
+.month-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.month-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.75rem 0.5rem;
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.12s;
+  touch-action: manipulation;
+}
+
+.month-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.month-row:active {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.month-list li:last-child .month-row {
+  border-bottom: none;
+}
+
+.month-row-ico {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.month-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.month-row-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.month-row-meta {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted2);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+.month-row-chevron {
+  flex-shrink: 0;
+  opacity: 0.45;
+}
+
+.empty-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* —— Thanh tiêu đề tháng —— */
+.month-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.25rem;
+}
+
+.month-topbar-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.month-topbar-eyebrow {
+  margin: 0 0 0.15rem;
+}
+
+.month-topbar-title {
+  margin: 0;
+  font-size: clamp(1.2rem, 4.5vw, 1.45rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
 /* —— Header —— */
 .header {
   margin-bottom: 1.25rem;
@@ -381,13 +610,13 @@ select:focus-visible {
   background: rgba(224, 112, 112, 0.18);
 }
 
-/* —— Table area —— */
+/* —— Danh sách chi: một dòng / dòng —— */
 .table-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.35rem;
 }
 
 .table-head .card-title {
@@ -396,83 +625,67 @@ select:focus-visible {
   min-width: 0;
 }
 
-.table-wrap {
-  position: relative;
-  margin: 0 -0.15rem;
+.expense-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.expense-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: 0.875rem;
-}
-
-.expense-table th {
-  text-align: left;
-  padding: 0.5rem 0.65rem;
-  color: var(--muted2);
-  font-weight: 600;
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.expense-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.15rem;
   border-bottom: 1px solid var(--border);
+  min-height: 48px;
 }
 
-.expense-table th.num,
-.expense-table td.num {
-  text-align: right;
-}
-
-.expense-table th.actions,
-.expense-table td.actions {
-  text-align: right;
-  width: 4.5rem;
-}
-
-.expense-table td {
-  padding: 0.7rem 0.65rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.expense-table tbody tr:last-child td {
+.expense-row:last-child {
   border-bottom: none;
 }
 
-@media (hover: hover) {
-  .expense-table tbody tr:hover td {
-    background: rgba(255, 255, 255, 0.02);
-  }
+.expense-cat-ico {
+  flex-shrink: 0;
+  width: 1.75rem;
+  text-align: center;
+  font-size: 1.125rem;
+  line-height: 1;
 }
 
-.expense-table .cat-badge {
-  display: inline-block;
-  max-width: 100%;
-  padding: 0.28rem 0.55rem;
-  border-radius: 8px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  line-height: 1.25;
+.expense-row-mid {
+  flex: 1;
+  min-width: 0;
 }
 
-.expense-name-cell {
-  color: var(--muted2);
-  max-width: 8rem;
-}
-
-.expense-name-cell.has-name {
+.expense-row-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--text);
+}
+
+.expense-row-amt {
+  flex-shrink: 0;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-align: right;
 }
 
 .empty-state {
   margin: 0;
-  padding: 2rem 1rem;
+  padding: 1.75rem 0.75rem;
   text-align: center;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
@@ -485,21 +698,34 @@ select:focus-visible {
 
 .breakdown-item {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  padding: 0.75rem 0;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0;
   border-bottom: 1px solid var(--border);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .breakdown-item:last-child {
   border-bottom: none;
 }
 
+.breakdown-icon {
+  flex-shrink: 0;
+  width: 1.5rem;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.breakdown-mid {
+  flex: 1;
+  min-width: 0;
+}
+
 .breakdown-item .label {
   color: var(--text);
-  line-height: 1.4;
+  line-height: 1.35;
+  font-weight: 500;
 }
 
 .breakdown-item .amount {
@@ -507,6 +733,15 @@ select:focus-visible {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.breakdown-empty {
+  justify-content: center;
+  color: var(--muted);
+  font-size: 0.875rem;
+  border: none;
+  padding: 1rem 0;
 }
 
 /* —— Pie chart —— */
@@ -606,82 +841,6 @@ select:focus-visible {
     flex: 1;
     min-width: 180px;
     max-width: none;
-  }
-}
-
-/* —— Mobile: bảng → thẻ từng dòng —— */
-@media (max-width: 540px) {
-  .expense-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
-  .expense-table tbody {
-    display: block;
-  }
-
-  .expense-table tr {
-    display: block;
-    margin-bottom: 0.65rem;
-    padding: 0.15rem;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-
-  .expense-table td {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.65rem 0.85rem;
-    border-bottom: 1px solid var(--border);
-    text-align: right;
-    min-height: 2.75rem;
-  }
-
-  .expense-table td:last-child {
-    border-bottom: none;
-  }
-
-  .expense-table td::before {
-    content: attr(data-label);
-    flex-shrink: 0;
-    font-size: 0.65rem;
-    font-weight: 600;
-    color: var(--muted2);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    text-align: left;
-  }
-
-  .expense-table td.actions {
-    justify-content: flex-end;
-  }
-
-  .expense-table td.actions::before {
-    content: none;
-  }
-
-  .expense-name-cell {
-    max-width: none;
-    word-break: break-word;
-  }
-
-  .table-head {
-    flex-wrap: wrap;
-  }
-
-  #btn-clear-all {
-    flex-shrink: 0;
   }
 }
 

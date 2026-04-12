@@ -1,32 +1,40 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "family-budget-v1";
+  var STORAGE_V1 = "family-budget-v1";
+  var STORAGE_V2 = "family-budget-v2";
 
   var CATEGORIES = [
-    { id: "an-uong", label: "Ăn uống" },
-    { id: "thoi-trang", label: "Thời trang" },
-    { id: "giai-tri", label: "Giải trí" },
-    { id: "con-nhim", label: "Nhím" },
-    { id: "con-hy", label: "Hy" },
-    { id: "sinh-hoat", label: "Sinh hoạt" },
-    { id: "di-lai", label: "Đi lại / Giao thông" },
-    { id: "suc-khoe", label: "Sức khỏe" },
-    { id: "nha-cua", label: "Nhà cửa / Tiện ích" },
-    { id: "hoc-tap", label: "Học tập / Phát triển" },
-    { id: "tiet-kiem", label: "Tiết kiệm" },
-    { id: "dau-tu", label: "Đầu tư" },
-    { id: "tra-no", label: "Trả nợ" },
-    { id: "khac", label: "Khác" },
+    { id: "an-uong", label: "Ăn uống", icon: "🍜" },
+    { id: "thoi-trang", label: "Thời trang", icon: "👔" },
+    { id: "giai-tri", label: "Giải trí", icon: "🎮" },
+    { id: "con-nhim", label: "Nhím", icon: "🦔" },
+    { id: "con-hy", label: "Hy", icon: "🌸" },
+    { id: "sinh-hoat", label: "Sinh hoạt", icon: "💡" },
+    { id: "di-lai", label: "Đi lại / Giao thông", icon: "🚗" },
+    { id: "suc-khoe", label: "Sức khỏe", icon: "💊" },
+    { id: "nha-cua", label: "Nhà cửa / Tiện ích", icon: "🏠" },
+    { id: "hoc-tap", label: "Học tập / Phát triển", icon: "📚" },
+    { id: "tiet-kiem", label: "Tiết kiệm", icon: "💰" },
+    { id: "dau-tu", label: "Đầu tư", icon: "📈" },
+    { id: "tra-no", label: "Trả nợ", icon: "📉" },
+    { id: "khac", label: "Khác", icon: "📌" },
   ];
 
   var categoryMap = {};
+  var categoryIconMap = {};
   CATEGORIES.forEach(function (c) {
     categoryMap[c.id] = c.label;
+    categoryIconMap[c.id] = c.icon;
   });
 
-  /** 1 đơn vị nhập = 1 nghìn đồng (1.000 ₫). */
   var VND_PER_INPUT_UNIT = 1000;
+
+  function currentMonthKey() {
+    var d = new Date();
+    var mo = d.getMonth() + 1;
+    return d.getFullYear() + "-" + (mo < 10 ? "0" : "") + mo;
+  }
 
   function parseMoneyInput(str) {
     if (str == null || String(str).trim() === "") return 0;
@@ -38,7 +46,6 @@
     return isNaN(n) ? 0 : Math.round(n);
   }
 
-  /** Hệ số nhập theo nghìn: 1,5 hoặc 1.5 → không dùng dấu . phân tách hàng nghìn. */
   function parseNganCoefficient(str) {
     if (str == null || String(str).trim() === "") return 0;
     var s = String(str).trim().replace(/\s/g, "").replace(",", ".");
@@ -53,7 +60,6 @@
     return Math.round(parseNganCoefficient(s) * VND_PER_INPUT_UNIT);
   }
 
-  /** Hiển thị ô thu nhập theo nghìn sau khi lưu. */
   function formatAsNganDisplay(vnd) {
     if (!vnd || vnd <= 0) return "";
     var k = vnd / VND_PER_INPUT_UNIT;
@@ -62,7 +68,6 @@
     return rounded.toFixed(3).replace(/\.?0+$/, "").replace(".", ",");
   }
 
-  /** Chuỗi kiểu 25.000.000 = VNĐ đủ (dán từ nơi khác). */
   function looksLikeFormattedVND(str) {
     return /^\d{1,3}(\.\d{3})+$/.test(String(str).replace(/\s/g, ""));
   }
@@ -78,32 +83,110 @@
     return "e-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
   }
 
-  function loadState() {
+  function loadAppData() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return { income: 0, expenses: [] };
-      var data = JSON.parse(raw);
-      return {
-        income: typeof data.income === "number" ? data.income : parseMoneyInput(data.income),
-        expenses: Array.isArray(data.expenses) ? data.expenses : [],
-      };
-    } catch (e) {
-      return { income: 0, expenses: [] };
-    }
+      var raw = localStorage.getItem(STORAGE_V2);
+      if (raw) {
+        var d = JSON.parse(raw);
+        return {
+          months: d.months && typeof d.months === "object" ? d.months : {},
+        };
+      }
+    } catch (e) {}
+    var months = {};
+    try {
+      var v1 = localStorage.getItem(STORAGE_V1);
+      if (v1) {
+        var old = JSON.parse(v1);
+        months[currentMonthKey()] = {
+          income:
+            typeof old.income === "number"
+              ? old.income
+              : parseMoneyInput(String(old.income || "")),
+          expenses: Array.isArray(old.expenses) ? old.expenses : [],
+        };
+        try {
+          localStorage.setItem(
+            STORAGE_V2,
+            JSON.stringify({ months: months })
+          );
+        } catch (e3) {}
+      }
+    } catch (e2) {}
+    return { months: months };
   }
 
-  function saveState(state) {
+  function saveAppData() {
     try {
       localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ income: state.income, expenses: state.expenses })
+        STORAGE_V2,
+        JSON.stringify({ months: app.months })
       );
-    } catch (e) {
-      /* ignore quota */
-    }
+    } catch (e) {}
   }
 
-  var state = loadState();
+  var app = loadAppData();
+  var activeMonthKey = null;
+  var state = null;
+  var selectedYear = new Date().getFullYear();
+
+  function ensureMonth(k) {
+    if (!app.months[k]) app.months[k] = { income: 0, expenses: [] };
+    if (!Array.isArray(app.months[k].expenses)) app.months[k].expenses = [];
+    if (typeof app.months[k].income !== "number") app.months[k].income = 0;
+    return app.months[k];
+  }
+
+  function monthKeysForYear(y) {
+    var prefix = String(y) + "-";
+    return Object.keys(app.months)
+      .filter(function (k) {
+        return k.length === 7 && k.indexOf(prefix) === 0;
+      })
+      .sort(function (a, b) {
+        return b.localeCompare(a);
+      });
+  }
+
+  function totalExpensesForMonth(m) {
+    if (!m || !m.expenses) return 0;
+    return m.expenses.reduce(function (s, e) {
+      return s + (typeof e.amount === "number" ? e.amount : 0);
+    }, 0);
+  }
+
+  function aggregateYear(y) {
+    var keys = monthKeysForYear(y);
+    var inc = 0;
+    var exp = 0;
+    keys.forEach(function (k) {
+      var m = app.months[k];
+      inc += m.income || 0;
+      exp += totalExpensesForMonth(m);
+    });
+    return { income: inc, expenses: exp, balance: inc - exp };
+  }
+
+  function formatMonthKeyVi(key) {
+    var p = key.split("-");
+    if (p.length !== 2) return key;
+    return "Tháng " + String(parseInt(p[1], 10)) + " · " + p[0];
+  }
+
+  var elHome = document.getElementById("screen-home");
+  var elMonth = document.getElementById("screen-month");
+  var elYearDisplay = document.getElementById("year-display");
+  var elYearIncome = document.getElementById("year-sum-income");
+  var elYearExpenses = document.getElementById("year-sum-expenses");
+  var elYearBalance = document.getElementById("year-sum-balance");
+  var elMonthList = document.getElementById("month-list");
+  var elMonthListEmpty = document.getElementById("month-list-empty");
+  var elNewMonthInput = document.getElementById("new-month-input");
+  var elBtnOpenMonth = document.getElementById("btn-open-month");
+  var elYearPrev = document.getElementById("year-prev");
+  var elYearNext = document.getElementById("year-next");
+  var elBtnBack = document.getElementById("btn-back-home");
+  var elMonthScreenTitle = document.getElementById("month-screen-title");
 
   var elIncome = document.getElementById("monthly-income");
   var elIncomePreview = document.getElementById("income-amount-preview");
@@ -112,7 +195,7 @@
   var elAmount = document.getElementById("expense-amount");
   var elExpensePreview = document.getElementById("expense-amount-preview");
   var elForm = document.getElementById("expense-form");
-  var elTbody = document.getElementById("expense-tbody");
+  var elExpenseList = document.getElementById("expense-list");
   var elEmpty = document.getElementById("empty-state");
   var elSumIncome = document.getElementById("sum-income");
   var elSumExpenses = document.getElementById("sum-expenses");
@@ -130,7 +213,7 @@
     CATEGORIES.forEach(function (c) {
       var opt = document.createElement("option");
       opt.value = c.id;
-      opt.textContent = c.label;
+      opt.textContent = c.icon + "  " + c.label;
       elCategory.appendChild(opt);
     });
   }
@@ -175,9 +258,8 @@
     };
   }
 
-  state.expenses = state.expenses.map(normalizeExpenseRow);
-
   function totalExpenses() {
+    if (!state) return 0;
     return state.expenses.reduce(function (s, e) {
       return s + e.amount;
     }, 0);
@@ -188,6 +270,7 @@
     CATEGORIES.forEach(function (c) {
       map[c.id] = 0;
     });
+    if (!state) return map;
     state.expenses.forEach(function (e) {
       if (map[e.category] == null) map[e.category] = 0;
       map[e.category] += e.amount;
@@ -244,7 +327,7 @@
   }
 
   function renderPieChart() {
-    if (!elPieBody || !elPieSlices || !elPieLegend) return;
+    if (!elPieBody || !elPieSlices || !elPieLegend || !state) return;
     var byCat = totalsByCategory();
     var segments = [];
     CATEGORIES.forEach(function (c) {
@@ -310,8 +393,7 @@
       var text = document.createElement("span");
       text.className = "pie-legend-text";
       text.innerHTML =
-        "<span class=\"pie-legend-label\"></span>" +
-        "<span class=\"pie-legend-meta\"></span>";
+        '<span class="pie-legend-label"></span><span class="pie-legend-meta"></span>';
       text.querySelector(".pie-legend-label").textContent = seg.label;
       text.querySelector(".pie-legend-meta").textContent =
         formatMoneyVND(seg.amount) + " · " + pct + "%";
@@ -324,12 +406,12 @@
       var parts = segments.map(function (s) {
         return s.label + " " + Math.round((s.amount / total) * 100) + "%";
       });
-      elPieTitle.textContent =
-        "Chi tiêu theo danh mục: " + parts.join(", ");
+      elPieTitle.textContent = "Chi tiêu theo danh mục: " + parts.join(", ");
     }
   }
 
   function renderSummary() {
+    if (!state) return;
     var income = state.income;
     var spent = totalExpenses();
     var balance = income - spent;
@@ -345,98 +427,238 @@
   }
 
   function renderBreakdown() {
-    var byCat = totalsByCategory();
     elBreakdown.innerHTML = "";
+    if (!state) return;
+    var byCat = totalsByCategory();
     CATEGORIES.forEach(function (c) {
       var amt = byCat[c.id] || 0;
       if (amt === 0) return;
       var li = document.createElement("li");
       li.className = "breakdown-item";
-      li.innerHTML =
-        '<span class="label"></span><span class="amount"></span>';
-      li.querySelector(".label").textContent = c.label;
-      li.querySelector(".amount").textContent = formatMoneyVND(amt);
+      var icon = document.createElement("span");
+      icon.className = "breakdown-icon";
+      icon.textContent = c.icon;
+      icon.setAttribute("aria-hidden", "true");
+      var mid = document.createElement("span");
+      mid.className = "breakdown-mid";
+      var lab = document.createElement("span");
+      lab.className = "label";
+      lab.textContent = c.label;
+      mid.appendChild(lab);
+      var am = document.createElement("span");
+      am.className = "amount";
+      am.textContent = formatMoneyVND(amt);
+      li.appendChild(icon);
+      li.appendChild(mid);
+      li.appendChild(am);
       elBreakdown.appendChild(li);
     });
     if (!elBreakdown.children.length) {
       var empty = document.createElement("li");
-      empty.className = "breakdown-item";
-      empty.style.border = "none";
-      empty.style.color = "var(--muted)";
+      empty.className = "breakdown-item breakdown-empty";
       empty.textContent = "Chưa có chi theo danh mục.";
       elBreakdown.appendChild(empty);
     }
   }
 
-  function renderTable() {
-    elTbody.innerHTML = "";
+  function iconTrashSvg() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon-svg");
+    svg.setAttribute("width", "20");
+    svg.setAttribute("height", "20");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#icon-trash");
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function renderExpenseList() {
+    elExpenseList.innerHTML = "";
+    if (!state) return;
     var hasRows = state.expenses.length > 0;
     elEmpty.hidden = hasRows;
 
     state.expenses.forEach(function (e) {
-      var tr = document.createElement("tr");
-      tr.dataset.id = e.id;
+      var li = document.createElement("li");
+      li.className = "expense-row";
+      li.dataset.id = e.id;
 
-      var tdCat = document.createElement("td");
-      tdCat.setAttribute("data-label", "Danh mục");
-      var badge = document.createElement("span");
-      badge.className = "cat-badge";
-      badge.textContent = categoryMap[e.category] || e.category;
-      tdCat.appendChild(badge);
+      var ico = document.createElement("span");
+      ico.className = "expense-cat-ico";
+      ico.textContent = categoryIconMap[e.category] || "📌";
+      ico.title = categoryMap[e.category] || e.category;
 
-      var tdName = document.createElement("td");
-      tdName.setAttribute("data-label", "Tên");
-      tdName.className = "expense-name-cell" + (e.name ? " has-name" : "");
-      tdName.textContent = e.name || "—";
-      tdName.title = e.name || "";
+      var mid = document.createElement("div");
+      mid.className = "expense-row-mid";
+      var line = document.createElement("span");
+      line.className = "expense-row-line";
+      var namePart = e.name
+        ? e.name
+        : categoryMap[e.category] || e.category;
+      line.textContent = namePart;
+      line.title = categoryMap[e.category] + (e.name ? " · " + e.name : "");
+      mid.appendChild(line);
 
-      var tdAmt = document.createElement("td");
-      tdAmt.setAttribute("data-label", "Số tiền");
-      tdAmt.className = "num";
-      tdAmt.textContent = formatMoneyVND(e.amount);
+      var amt = document.createElement("span");
+      amt.className = "expense-row-amt";
+      amt.textContent = formatMoneyVND(e.amount);
 
-      var tdAct = document.createElement("td");
-      tdAct.className = "actions";
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "btn btn-danger";
-      btn.textContent = "Xóa";
+      btn.className = "btn-icon btn-icon-danger";
       btn.setAttribute("aria-label", "Xóa khoản chi");
+      btn.appendChild(iconTrashSvg());
       btn.addEventListener("click", function () {
         removeExpense(e.id);
       });
-      tdAct.appendChild(btn);
 
-      tr.appendChild(tdCat);
-      tr.appendChild(tdName);
-      tr.appendChild(tdAmt);
-      tr.appendChild(tdAct);
-      elTbody.appendChild(tr);
+      li.appendChild(ico);
+      li.appendChild(mid);
+      li.appendChild(amt);
+      li.appendChild(btn);
+      elExpenseList.appendChild(li);
     });
   }
 
   function persistAndRender() {
-    saveState(state);
+    if (!activeMonthKey || !state) return;
+    saveAppData();
     renderSummary();
     renderBreakdown();
-    renderTable();
+    renderExpenseList();
     renderPieChart();
   }
 
   function removeExpense(id) {
+    if (!state) return;
     state.expenses = state.expenses.filter(function (e) {
       return e.id !== id;
     });
     persistAndRender();
   }
 
-  elIncome.value = formatAsNganDisplay(state.income);
+  function renderHome() {
+    elYearDisplay.textContent = String(selectedYear);
+    var y = aggregateYear(selectedYear);
+    elYearIncome.textContent = formatMoneyVND(y.income);
+    elYearExpenses.textContent = formatMoneyVND(y.expenses);
+    elYearBalance.textContent = formatMoneyVND(y.balance);
+    var yb = elYearBalance.closest(".summary-item");
+    if (yb) yb.classList.toggle("negative", y.balance < 0);
+
+    elMonthList.innerHTML = "";
+    var keys = monthKeysForYear(selectedYear);
+    elMonthListEmpty.hidden = keys.length > 0;
+
+    keys.forEach(function (k) {
+      var m = app.months[k];
+      var spent = totalExpensesForMonth(m);
+      var inc = m.income || 0;
+      var bal = inc - spent;
+
+      var li = document.createElement("li");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "month-row";
+
+      var cal = document.createElement("span");
+      cal.className = "month-row-ico";
+      cal.setAttribute("aria-hidden", "true");
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "icon-svg icon-svg-muted");
+      svg.setAttribute("width", "22");
+      svg.setAttribute("height", "22");
+      var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      use.setAttribute("href", "#icon-calendar");
+      svg.appendChild(use);
+      cal.appendChild(svg);
+
+      var txt = document.createElement("span");
+      txt.className = "month-row-text";
+      var t1 = document.createElement("span");
+      t1.className = "month-row-title";
+      t1.textContent = formatMonthKeyVi(k);
+      var t2 = document.createElement("span");
+      t2.className = "month-row-meta";
+      t2.textContent =
+        "Thu " +
+        formatMoneyVND(inc) +
+        " · Chi " +
+        formatMoneyVND(spent) +
+        " · Còn " +
+        formatMoneyVND(bal);
+      txt.appendChild(t1);
+      txt.appendChild(t2);
+
+      var arr = document.createElement("span");
+      arr.className = "month-row-chevron";
+      arr.setAttribute("aria-hidden", "true");
+      var svg2 = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg2.setAttribute("class", "icon-svg");
+      svg2.setAttribute("width", "18");
+      svg2.setAttribute("height", "18");
+      var use2 = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      use2.setAttribute("href", "#icon-chevron-right");
+      svg2.appendChild(use2);
+      arr.appendChild(svg2);
+
+      btn.appendChild(cal);
+      btn.appendChild(txt);
+      btn.appendChild(arr);
+      btn.addEventListener("click", function () {
+        openMonth(k);
+      });
+
+      li.appendChild(btn);
+      elMonthList.appendChild(li);
+    });
+  }
+
+  function openMonth(key) {
+    flushIncomeFromField();
+    ensureMonth(key);
+    state = app.months[key];
+    state.expenses = state.expenses.map(normalizeExpenseRow);
+    activeMonthKey = key;
+
+    elHome.hidden = true;
+    elMonth.hidden = false;
+    elMonthScreenTitle.textContent = formatMonthKeyVi(key);
+
+    elIncome.value = formatAsNganDisplay(state.income);
+    updateAmountPreview(elIncome, elIncomePreview);
+    updateAmountPreview(elAmount, elExpensePreview);
+
+    persistAndRender();
+  }
+
+  function goHome() {
+    flushIncomeFromField();
+    activeMonthKey = null;
+    state = null;
+    elMonth.hidden = true;
+    elHome.hidden = false;
+    renderHome();
+  }
+
+  function flushIncomeFromField() {
+    if (!activeMonthKey || !state || !elIncome) return;
+    var v = parseMoneyToVND(elIncome.value);
+    if (v !== state.income) {
+      state.income = v;
+      elIncome.value = formatAsNganDisplay(state.income);
+      updateAmountPreview(elIncome, elIncomePreview);
+      saveAppData();
+    }
+  }
 
   elIncome.addEventListener("blur", function () {
+    if (!state) return;
     state.income = parseMoneyToVND(elIncome.value);
     elIncome.value = formatAsNganDisplay(state.income);
     updateAmountPreview(elIncome, elIncomePreview);
     persistAndRender();
+    renderHome();
   });
 
   elIncome.addEventListener("keydown", function (ev) {
@@ -446,16 +668,6 @@
     }
   });
 
-  function flushIncomeFromField() {
-    var v = parseMoneyToVND(elIncome.value);
-    if (v !== state.income) {
-      state.income = v;
-      elIncome.value = formatAsNganDisplay(state.income);
-      updateAmountPreview(elIncome, elIncomePreview);
-      saveState(state);
-    }
-  }
-
   window.addEventListener("pagehide", flushIncomeFromField);
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") flushIncomeFromField();
@@ -463,6 +675,7 @@
 
   elForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
+    if (!state) return;
     var amount = parseMoneyToVND(elAmount.value);
     if (amount <= 0) {
       elAmount.focus();
@@ -478,19 +691,48 @@
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
     persistAndRender();
+    renderHome();
     elAmount.focus();
   });
 
   elBtnClear.addEventListener("click", function () {
-    if (!state.expenses.length) return;
-    if (confirm("Xóa hết các khoản chi trong bảng? Thu nhập tháng giữ nguyên.")) {
+    if (!state || !state.expenses.length) return;
+    if (
+      confirm(
+        "Xóa hết các khoản chi của tháng này? Thu nhập tháng giữ nguyên."
+      )
+    ) {
       state.expenses = [];
       persistAndRender();
+      renderHome();
     }
+  });
+
+  elBtnBack.addEventListener("click", goHome);
+
+  elYearPrev.addEventListener("click", function () {
+    selectedYear -= 1;
+    renderHome();
+  });
+
+  elYearNext.addEventListener("click", function () {
+    selectedYear += 1;
+    renderHome();
+  });
+
+  elBtnOpenMonth.addEventListener("click", function () {
+    var v = elNewMonthInput && elNewMonthInput.value;
+    if (!v || v.length < 7) return;
+    openMonth(v);
   });
 
   fillCategorySelect();
   bindAmountPreview(elIncome, elIncomePreview);
   bindAmountPreview(elAmount, elExpensePreview);
-  persistAndRender();
+
+  if (elNewMonthInput) elNewMonthInput.value = currentMonthKey();
+
+  elHome.hidden = false;
+  elMonth.hidden = true;
+  renderHome();
 })();
