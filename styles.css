@@ -592,6 +592,106 @@ select:focus-visible {
   color: var(--muted);
 }
 
+/* —— Pie chart —— */
+.pie-chart-wrap {
+  margin-top: 0.15rem;
+}
+
+.pie-chart-empty {
+  margin: 0;
+  padding: 1.5rem 0.5rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.pie-chart-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.15rem;
+}
+
+.pie-svg {
+  width: min(220px, 72vw);
+  height: auto;
+  max-width: 100%;
+  display: block;
+  filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.35));
+}
+
+.pie-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 320px;
+}
+
+.pie-legend-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.pie-legend-item:last-child {
+  border-bottom: none;
+}
+
+.pie-legend-dot {
+  flex-shrink: 0;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 3px;
+  margin-top: 0.28rem;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.pie-legend-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.pie-legend-label {
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.pie-legend-meta {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 420px) {
+  .pie-chart-body {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+  }
+
+  .pie-svg {
+    width: 200px;
+    flex-shrink: 0;
+  }
+
+  .pie-legend {
+    flex: 1;
+    min-width: 180px;
+    max-width: none;
+  }
+}
+
 /* —— Mobile: bảng → thẻ từng dòng —— */
 @media (max-width: 540px) {
   .expense-table thead {

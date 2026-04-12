@@ -131,6 +131,11 @@
   var elSumBalance = document.getElementById("sum-balance");
   var elBreakdown = document.getElementById("category-breakdown");
   var elBtnClear = document.getElementById("btn-clear-all");
+  var elPieEmpty = document.getElementById("pie-chart-empty");
+  var elPieBody = document.getElementById("pie-chart-body");
+  var elPieSlices = document.getElementById("expense-pie-slices");
+  var elPieLegend = document.getElementById("expense-pie-legend");
+  var elPieTitle = document.getElementById("pie-svg-title");
 
   function fillCategorySelect() {
     elCategory.innerHTML = "";
@@ -239,6 +244,140 @@
     return map;
   }
 
+  var PIE_COLORS = [
+    "#34c3a0",
+    "#5b9fe8",
+    "#c78fff",
+    "#e8b84a",
+    "#e07070",
+    "#5fd4c8",
+    "#9ab87a",
+    "#d4a574",
+    "#8b9fe0",
+    "#c45c9c",
+    "#7dd4b0",
+    "#a8b0c0",
+    "#6b8cce",
+    "#9a8ad4",
+    "#5ccea8",
+    "#e8986a",
+  ];
+
+  function pieSlicePath(cx, cy, r, a0, a1) {
+    var x0 = cx + r * Math.cos(a0);
+    var y0 = cy + r * Math.sin(a0);
+    var x1 = cx + r * Math.cos(a1);
+    var y1 = cy + r * Math.sin(a1);
+    var large = a1 - a0 > Math.PI ? 1 : 0;
+    return (
+      "M " +
+      cx +
+      " " +
+      cy +
+      " L " +
+      x0 +
+      " " +
+      y0 +
+      " A " +
+      r +
+      " " +
+      r +
+      " 0 " +
+      large +
+      " 1 " +
+      x1 +
+      " " +
+      y1 +
+      " Z"
+    );
+  }
+
+  function renderPieChart() {
+    if (!elPieBody || !elPieSlices || !elPieLegend) return;
+    var byCat = totalsByCategory();
+    var segments = [];
+    CATEGORIES.forEach(function (c) {
+      var amt = byCat[c.id] || 0;
+      if (amt > 0) segments.push({ id: c.id, label: c.label, amount: amt });
+    });
+    var total = segments.reduce(function (s, x) {
+      return s + x.amount;
+    }, 0);
+
+    if (total <= 0 || !segments.length) {
+      elPieEmpty.hidden = false;
+      elPieBody.hidden = true;
+      elPieSlices.innerHTML = "";
+      elPieLegend.innerHTML = "";
+      return;
+    }
+
+    elPieEmpty.hidden = true;
+    elPieBody.hidden = false;
+
+    var cx = 0;
+    var cy = 0;
+    var r = 100;
+    var stroke = "#161d26";
+    elPieSlices.innerHTML = "";
+
+    if (segments.length === 1) {
+      var circ = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circ.setAttribute("cx", String(cx));
+      circ.setAttribute("cy", String(cy));
+      circ.setAttribute("r", String(r));
+      circ.setAttribute("fill", PIE_COLORS[0]);
+      circ.setAttribute("stroke", stroke);
+      circ.setAttribute("stroke-width", "2");
+      elPieSlices.appendChild(circ);
+    } else {
+      var start = -Math.PI / 2;
+      segments.forEach(function (seg, i) {
+        var frac = seg.amount / total;
+        var a0 = start;
+        var a1 = start + frac * 2 * Math.PI;
+        start = a1;
+        var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", pieSlicePath(cx, cy, r, a0, a1));
+        path.setAttribute("fill", PIE_COLORS[i % PIE_COLORS.length]);
+        path.setAttribute("stroke", stroke);
+        path.setAttribute("stroke-width", "2");
+        path.setAttribute("stroke-linejoin", "round");
+        elPieSlices.appendChild(path);
+      });
+    }
+
+    elPieLegend.innerHTML = "";
+    segments.forEach(function (seg, i) {
+      var pct = total > 0 ? Math.round((seg.amount / total) * 1000) / 10 : 0;
+      var li = document.createElement("li");
+      li.className = "pie-legend-item";
+      var dot = document.createElement("span");
+      dot.className = "pie-legend-dot";
+      dot.style.background = PIE_COLORS[i % PIE_COLORS.length];
+      dot.setAttribute("aria-hidden", "true");
+      var text = document.createElement("span");
+      text.className = "pie-legend-text";
+      text.innerHTML =
+        "<span class=\"pie-legend-label\"></span>" +
+        "<span class=\"pie-legend-meta\"></span>";
+      text.querySelector(".pie-legend-label").textContent = seg.label;
+      text.querySelector(".pie-legend-meta").textContent =
+        formatMoneyVND(seg.amount) + " · " + pct + "%";
+      li.appendChild(dot);
+      li.appendChild(text);
+      elPieLegend.appendChild(li);
+    });
+
+    if (elPieTitle) {
+      var parts = segments.map(function (s) {
+        return s.label + " " + Math.round((s.amount / total) * 100) + "%";
+      });
+      elPieTitle.textContent =
+        "Chi tiêu theo danh mục: " + parts.join(", ");
+    }
+  }
+
   function renderSummary() {
     var income = state.income;
     var spent = totalExpenses();
@@ -330,6 +469,7 @@
     renderSummary();
     renderBreakdown();
     renderTable();
+    renderPieChart();
   }
 
   function removeExpense(id) {

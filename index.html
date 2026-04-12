@@ -173,6 +173,26 @@
       <h2 id="breakdown-heading" class="card-title">Theo danh mục</h2>
       <ul id="category-breakdown" class="breakdown-list"></ul>
     </section>
+
+    <section class="card pie-card" aria-labelledby="pie-heading">
+      <h2 id="pie-heading" class="card-title">Phân bổ chi tiêu</h2>
+      <div class="pie-chart-wrap" id="pie-chart-wrap">
+        <p id="pie-chart-empty" class="pie-chart-empty">Chưa có khoản chi — biểu đồ sẽ hiện khi bạn thêm dữ liệu.</p>
+        <div id="pie-chart-body" class="pie-chart-body" hidden>
+          <svg
+            class="pie-svg"
+            id="expense-pie-svg"
+            viewBox="-105 -105 210 210"
+            role="img"
+            aria-labelledby="pie-svg-title"
+          >
+            <title id="pie-svg-title">Biểu đồ tròn chi tiêu theo danh mục</title>
+            <g id="expense-pie-slices"></g>
+          </svg>
+          <ul id="expense-pie-legend" class="pie-legend"></ul>
+        </div>
+      </div>
+    </section>
   </div>
   <script src="app.js"></script>
 </body>
