@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c1014" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Kế hoạch chi tiêu gia đình</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <p class="eyebrow">Chi tiêu gia đình</p>
+      <h1>Kế hoạch tháng</h1>
+      <p class="subtitle">Dữ liệu chỉ lưu trên thiết bị của bạn — mở là dùng được ngay.</p>
+    </header>
+
+    <section class="card summary-card card-elevated" aria-labelledby="summary-heading">
+      <h2 id="summary-heading" class="card-title">Tổng quan</h2>
+      <dl class="summary-grid">
+        <div class="summary-item">
+          <dt>Thu nhập</dt>
+          <dd id="sum-income">0 ₫</dd>
+        </div>
+        <div class="summary-item">
+          <dt>Đã chi</dt>
+          <dd id="sum-expenses">0 ₫</dd>
+        </div>
+        <div class="summary-item highlight summary-balance">
+          <dt>Còn lại</dt>
+          <dd id="sum-balance">0 ₫</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="card income-card" aria-labelledby="income-heading">
+      <h2 id="income-heading" class="card-title">Thu nhập tháng</h2>
+      <label class="field">
+        <span class="field-label">Số tiền</span>
+        <span class="field-hint">Nhập theo triệu hoặc trăm nghìn — gạt nút bên dưới để đổi đơn vị (mặc định: triệu).</span>
+        <div class="amount-stack">
+          <input
+            type="text"
+            id="monthly-income"
+            class="amount-input"
+            inputmode="decimal"
+            autocomplete="off"
+            enterkeyhint="done"
+            placeholder="Ví dụ: 25"
+          />
+          <div
+            class="unit-slider"
+            id="income-unit-slider"
+            role="radiogroup"
+            aria-label="Đơn vị nhập thu nhập"
+          >
+            <input
+              type="radio"
+              name="income-unit"
+              id="income-unit-trieu"
+              value="trieu"
+              class="unit-slider-input"
+              checked
+            />
+            <input
+              type="radio"
+              name="income-unit"
+              id="income-unit-tram"
+              value="tram-nghin"
+              class="unit-slider-input"
+            />
+            <div class="unit-slider-pill">
+              <span class="unit-slider-knob" aria-hidden="true"></span>
+              <label for="income-unit-trieu" class="unit-slider-label">Triệu</label>
+              <label for="income-unit-tram" class="unit-slider-label">Trăm nghìn</label>
+            </div>
+          </div>
+        </div>
+      </label>
+    </section>
+
+    <section class="card add-card" aria-labelledby="add-heading">
+      <h2 id="add-heading" class="card-title">Thêm khoản chi</h2>
+      <form id="expense-form" class="expense-form">
+        <label class="field">
+          <span class="field-label">Danh mục</span>
+          <div class="select-wrap">
+            <select id="expense-category" required></select>
+          </div>
+        </label>
+        <label class="field">
+          <span class="field-label">Tên khoản <span class="optional">(không bắt buộc)</span></span>
+          <input type="text" id="expense-name" maxlength="120" enterkeyhint="next" placeholder="Có thể để trống" />
+        </label>
+        <label class="field">
+          <span class="field-label">Số tiền</span>
+          <div class="amount-stack">
+            <input
+              type="text"
+              id="expense-amount"
+              class="amount-input"
+              inputmode="decimal"
+              required
+              enterkeyhint="done"
+              placeholder="Ví dụ: 1,5"
+            />
+            <div
+              class="unit-slider"
+              id="expense-unit-slider"
+              role="radiogroup"
+              aria-label="Đơn vị nhập số tiền chi"
+            >
+              <input
+                type="radio"
+                name="expense-unit"
+                id="expense-unit-trieu"
+                value="trieu"
+                class="unit-slider-input"
+                checked
+              />
+              <input
+                type="radio"
+                name="expense-unit"
+                id="expense-unit-tram"
+                value="tram-nghin"
+                class="unit-slider-input"
+              />
+              <div class="unit-slider-pill">
+                <span class="unit-slider-knob" aria-hidden="true"></span>
+                <label for="expense-unit-trieu" class="unit-slider-label">Triệu</label>
+                <label for="expense-unit-tram" class="unit-slider-label">Trăm nghìn</label>
+              </div>
+            </div>
+          </div>
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">Thêm vào danh sách</button>
+      </form>
+    </section>
+
+    <section class="card table-card" aria-labelledby="table-heading">
+      <div class="table-head">
+        <h2 id="table-heading" class="card-title">Danh sách chi tiêu</h2>
+        <button type="button" id="btn-clear-all" class="btn btn-ghost btn-compact">Xóa hết</button>
+      </div>
+      <div class="table-wrap">
+        <table class="expense-table">
+          <thead>
+            <tr>
+              <th scope="col">Danh mục</th>
+              <th scope="col">Tên</th>
+              <th scope="col" class="num">Số tiền</th>
+              <th scope="col" class="actions">Thao tác</th>
+            </tr>
+          </thead>
+          <tbody id="expense-tbody"></tbody>
+        </table>
+        <p id="empty-state" class="empty-state" hidden>Chưa có khoản chi. Thêm ở mục phía trên.</p>
+      </div>
+    </section>
+
+    <section class="card breakdown-card" aria-labelledby="breakdown-heading">
+      <h2 id="breakdown-heading" class="card-title">Theo danh mục</h2>
+      <ul id="category-breakdown" class="breakdown-list"></ul>
+    </section>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
