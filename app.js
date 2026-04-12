@@ -3,6 +3,7 @@
 
   var STORAGE_V1 = "family-budget-v1";
   var STORAGE_V2 = "family-budget-v2";
+  var MENU_MONTH_SPAN = 60;
 
   var CATEGORIES = [
     { id: "an-uong", label: "Ăn uống", icon: "🍜" },
@@ -83,14 +84,32 @@
     return "e-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
   }
 
+  function defaultFixedTemplates() {
+    return [
+      {
+        id: "ft-default-tiet-kiem",
+        category: "tiet-kiem",
+        name: "",
+        amount: 20000000,
+      },
+    ];
+  }
+
   function loadAppData() {
     try {
       var raw = localStorage.getItem(STORAGE_V2);
       if (raw) {
         var d = JSON.parse(raw);
-        return {
-          months: d.months && typeof d.months === "object" ? d.months : {},
-        };
+        var months = d.months && typeof d.months === "object" ? d.months : {};
+        var fixedTemplates;
+        if (Array.isArray(d.fixedTemplates)) {
+          fixedTemplates = d.fixedTemplates;
+        } else if (d.fixedTemplates === undefined) {
+          fixedTemplates = defaultFixedTemplates();
+        } else {
+          fixedTemplates = [];
+        }
+        return { months: months, fixedTemplates: fixedTemplates };
       }
     } catch (e) {}
     var months = {};
@@ -108,44 +127,43 @@
         try {
           localStorage.setItem(
             STORAGE_V2,
-            JSON.stringify({ months: months })
+            JSON.stringify({
+              months: months,
+              fixedTemplates: defaultFixedTemplates(),
+            })
           );
         } catch (e3) {}
       }
     } catch (e2) {}
-    return { months: months };
+    return {
+      months: months,
+      fixedTemplates: defaultFixedTemplates(),
+    };
   }
 
   function saveAppData() {
     try {
       localStorage.setItem(
         STORAGE_V2,
-        JSON.stringify({ months: app.months })
+        JSON.stringify({
+          months: app.months,
+          fixedTemplates: app.fixedTemplates,
+        })
       );
     } catch (e) {}
   }
 
   var app = loadAppData();
+  if (!Array.isArray(app.fixedTemplates)) app.fixedTemplates = defaultFixedTemplates();
   var activeMonthKey = null;
   var state = null;
-  var selectedYear = new Date().getFullYear();
+  var editingExpenseId = null;
 
   function ensureMonth(k) {
     if (!app.months[k]) app.months[k] = { income: 0, expenses: [] };
     if (!Array.isArray(app.months[k].expenses)) app.months[k].expenses = [];
     if (typeof app.months[k].income !== "number") app.months[k].income = 0;
     return app.months[k];
-  }
-
-  function monthKeysForYear(y) {
-    var prefix = String(y) + "-";
-    return Object.keys(app.months)
-      .filter(function (k) {
-        return k.length === 7 && k.indexOf(prefix) === 0;
-      })
-      .sort(function (a, b) {
-        return b.localeCompare(a);
-      });
   }
 
   function totalExpensesForMonth(m) {
@@ -155,16 +173,12 @@
     }, 0);
   }
 
-  function aggregateYear(y) {
-    var keys = monthKeysForYear(y);
-    var inc = 0;
-    var exp = 0;
-    keys.forEach(function (k) {
-      var m = app.months[k];
-      inc += m.income || 0;
-      exp += totalExpensesForMonth(m);
-    });
-    return { income: inc, expenses: exp, balance: inc - exp };
+  function monthHasData(k) {
+    var m = app.months[k];
+    if (!m) return false;
+    if ((m.income || 0) > 0) return true;
+    if (m.expenses && m.expenses.length > 0) return true;
+    return false;
   }
 
   function formatMonthKeyVi(key) {
@@ -173,21 +187,73 @@
     return "Tháng " + String(parseInt(p[1], 10)) + " · " + p[0];
   }
 
-  var elHome = document.getElementById("screen-home");
-  var elMonth = document.getElementById("screen-month");
-  var elYearDisplay = document.getElementById("year-display");
-  var elYearIncome = document.getElementById("year-sum-income");
-  var elYearExpenses = document.getElementById("year-sum-expenses");
-  var elYearBalance = document.getElementById("year-sum-balance");
-  var elMonthList = document.getElementById("month-list");
-  var elMonthListEmpty = document.getElementById("month-list-empty");
-  var elNewMonthInput = document.getElementById("new-month-input");
-  var elBtnOpenMonth = document.getElementById("btn-open-month");
-  var elYearPrev = document.getElementById("year-prev");
-  var elYearNext = document.getElementById("year-next");
-  var elBtnBack = document.getElementById("btn-back-home");
-  var elMonthScreenTitle = document.getElementById("month-screen-title");
+  function allMenuMonthKeys() {
+    var set = {};
+    var out = [];
+    var d = new Date();
+    var i;
+    for (i = 0; i < MENU_MONTH_SPAN; i++) {
+      var y = d.getFullYear();
+      var mo = d.getMonth() + 1;
+      var k = y + "-" + (mo < 10 ? "0" : "") + mo;
+      if (!set[k]) {
+        set[k] = true;
+        out.push(k);
+      }
+      d.setMonth(d.getMonth() - 1);
+    }
+    Object.keys(app.months).forEach(function (k) {
+      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(k) && !set[k]) {
+        set[k] = true;
+        out.push(k);
+      }
+    });
+    out.sort(function (a, b) {
+      return b.localeCompare(a);
+    });
+    return out;
+  }
 
+  var URL_PARAM_THANG = "thang";
+
+  function readThangFromUrl() {
+    try {
+      var p = new URLSearchParams(window.location.search).get(URL_PARAM_THANG);
+      if (!p || !/^\d{4}-(0[1-9]|1[0-2])$/.test(p)) return null;
+      return p;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function hasInvalidThangParam() {
+    try {
+      var u = new URL(window.location.href);
+      return u.searchParams.has(URL_PARAM_THANG) && !readThangFromUrl();
+    } catch (e2) {
+      return false;
+    }
+  }
+
+  function buildUrlWithThang(key) {
+    var url = new URL(window.location.href);
+    url.searchParams.set(URL_PARAM_THANG, key);
+    return url.pathname + url.search + url.hash;
+  }
+
+  function buildUrlWithoutThang() {
+    var url = new URL(window.location.href);
+    url.searchParams.delete(URL_PARAM_THANG);
+    var q = url.searchParams.toString();
+    return url.pathname + (q ? "?" + q : "") + url.hash;
+  }
+
+  function syncUrlToMonth(key) {
+    if (readThangFromUrl() === key) return;
+    history.pushState({ thang: key }, "", buildUrlWithThang(key));
+  }
+
+  var elMonthScreenTitle = document.getElementById("month-screen-title");
   var elIncome = document.getElementById("monthly-income");
   var elIncomePreview = document.getElementById("income-amount-preview");
   var elCategory = document.getElementById("expense-category");
@@ -195,6 +261,7 @@
   var elAmount = document.getElementById("expense-amount");
   var elExpensePreview = document.getElementById("expense-amount-preview");
   var elForm = document.getElementById("expense-form");
+  var elExpenseFixed = document.getElementById("expense-fixed");
   var elExpenseList = document.getElementById("expense-list");
   var elEmpty = document.getElementById("empty-state");
   var elSumIncome = document.getElementById("sum-income");
@@ -208,13 +275,34 @@
   var elPieLegend = document.getElementById("expense-pie-legend");
   var elPieTitle = document.getElementById("pie-svg-title");
 
-  function fillCategorySelect() {
-    elCategory.innerHTML = "";
+  var elSideMenu = document.getElementById("side-menu");
+  var elSideMenuBackdrop = document.getElementById("side-menu-backdrop");
+  var elSideMenuPanel = document.getElementById("side-menu-panel");
+  var elSideMenuList = document.getElementById("side-menu-month-list");
+  var elBtnOpenMenu = document.getElementById("btn-open-menu");
+  var elBtnCloseMenu = document.getElementById("btn-close-menu");
+  var elMenuJumpMonth = document.getElementById("menu-jump-month");
+  var elMenuJumpBtn = document.getElementById("menu-jump-btn");
+
+  var elFixedTemplatesList = document.getElementById("fixed-templates-list");
+
+  var elEditDialog = document.getElementById("edit-expense-dialog");
+  var elEditBackdrop = document.getElementById("edit-expense-backdrop");
+  var elEditDesc = document.getElementById("edit-expense-desc");
+  var elEditAmount = document.getElementById("edit-expense-amount");
+  var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
+  var elEditTemplateNote = document.getElementById("edit-expense-template-note");
+  var elEditSave = document.getElementById("edit-expense-save");
+  var elEditCancel = document.getElementById("edit-expense-cancel");
+
+  function fillCategorySelect(el) {
+    if (!el) return;
+    el.innerHTML = "";
     CATEGORIES.forEach(function (c) {
       var opt = document.createElement("option");
       opt.value = c.id;
       opt.textContent = c.icon + "  " + c.label;
-      elCategory.appendChild(opt);
+      el.appendChild(opt);
     });
   }
 
@@ -250,12 +338,45 @@
   function normalizeExpenseRow(row) {
     var cat = row.category;
     if (cat === "con-cai") cat = "con-nhim";
-    return {
+    var o = {
       id: row.id || uid(),
       category: cat && categoryMap[cat] ? cat : "khac",
       name: typeof row.name === "string" ? row.name.trim() : "",
       amount: typeof row.amount === "number" && row.amount >= 0 ? Math.round(row.amount) : 0,
     };
+    if (row.templateId) o.templateId = row.templateId;
+    return o;
+  }
+
+  function syncFixedIntoMonth(m) {
+    if (!Array.isArray(app.fixedTemplates)) return;
+    app.fixedTemplates.forEach(function (t) {
+      if (!t || !t.id || !categoryMap[t.category]) return;
+      var exists = m.expenses.some(function (e) {
+        return e.templateId === t.id;
+      });
+      if (!exists) {
+        m.expenses.push({
+          id: uid(),
+          templateId: t.id,
+          category: t.category,
+          name: typeof t.name === "string" ? t.name.trim() : "",
+          amount:
+            typeof t.amount === "number" && t.amount >= 0
+              ? Math.round(t.amount)
+              : 0,
+        });
+      }
+    });
+  }
+
+  function findFixedTemplate(templateId) {
+    if (!templateId || !app.fixedTemplates) return null;
+    var i;
+    for (i = 0; i < app.fixedTemplates.length; i++) {
+      if (app.fixedTemplates[i].id === templateId) return app.fixedTemplates[i];
+    }
+    return null;
   }
 
   function totalExpenses() {
@@ -472,6 +593,71 @@
     return svg;
   }
 
+  function iconPencilSvg() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon-svg");
+    svg.setAttribute("width", "20");
+    svg.setAttribute("height", "20");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#icon-pencil");
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function renderFixedTemplatesList() {
+    if (!elFixedTemplatesList) return;
+    elFixedTemplatesList.innerHTML = "";
+    if (!Array.isArray(app.fixedTemplates) || !app.fixedTemplates.length) {
+      var empty = document.createElement("li");
+      empty.className = "fixed-template-row";
+      empty.textContent = "Chưa có khoản cố định — thêm bên dưới.";
+      empty.style.color = "var(--muted)";
+      empty.style.fontSize = "0.8125rem";
+      elFixedTemplatesList.appendChild(empty);
+      return;
+    }
+    app.fixedTemplates.forEach(function (t) {
+      var li = document.createElement("li");
+      li.className = "fixed-template-row";
+
+      var mid = document.createElement("div");
+      mid.className = "fixed-template-row-mid";
+      var title = document.createElement("span");
+      title.className = "fixed-template-row-title";
+      var catLabel = categoryMap[t.category] || t.category;
+      title.textContent = t.name ? t.name + " · " + catLabel : catLabel;
+      var sub = document.createElement("span");
+      sub.className = "fixed-template-row-amt";
+      sub.textContent = formatMoneyVND(t.amount);
+      mid.appendChild(title);
+      mid.appendChild(sub);
+
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-icon btn-icon-danger";
+      btn.setAttribute("aria-label", "Xóa khỏi khoản cố định");
+      btn.appendChild(iconTrashSvg());
+      btn.addEventListener("click", function () {
+        if (
+          !confirm(
+            "Xóa khoản cố định này? Các tháng sau sẽ không tự thêm nữa. Dòng trong tháng hiện tại giữ nguyên — bạn có thể xóa tay trong danh sách chi."
+          )
+        ) {
+          return;
+        }
+        app.fixedTemplates = app.fixedTemplates.filter(function (x) {
+          return x.id !== t.id;
+        });
+        saveAppData();
+        renderFixedTemplatesList();
+      });
+
+      li.appendChild(mid);
+      li.appendChild(btn);
+      elFixedTemplatesList.appendChild(li);
+    });
+  }
+
   function renderExpenseList() {
     elExpenseList.innerHTML = "";
     if (!state) return;
@@ -490,6 +676,15 @@
 
       var mid = document.createElement("div");
       mid.className = "expense-row-mid";
+      var wrap = document.createElement("div");
+      wrap.className = "expense-row-line-wrap";
+      if (e.templateId) {
+        var badge = document.createElement("span");
+        badge.className = "expense-badge-fixed";
+        badge.textContent = "Cố định";
+        badge.setAttribute("aria-hidden", "true");
+        wrap.appendChild(badge);
+      }
       var line = document.createElement("span");
       line.className = "expense-row-line";
       var namePart = e.name
@@ -497,11 +692,24 @@
         : categoryMap[e.category] || e.category;
       line.textContent = namePart;
       line.title = categoryMap[e.category] + (e.name ? " · " + e.name : "");
-      mid.appendChild(line);
+      wrap.appendChild(line);
+      mid.appendChild(wrap);
 
       var amt = document.createElement("span");
       amt.className = "expense-row-amt";
       amt.textContent = formatMoneyVND(e.amount);
+
+      var actions = document.createElement("div");
+      actions.className = "expense-row-actions";
+
+      var btnEdit = document.createElement("button");
+      btnEdit.type = "button";
+      btnEdit.className = "btn-icon btn-icon-muted";
+      btnEdit.setAttribute("aria-label", "Sửa số tiền");
+      btnEdit.appendChild(iconPencilSvg());
+      btnEdit.addEventListener("click", function () {
+        openEditExpenseDialog(e.id);
+      });
 
       var btn = document.createElement("button");
       btn.type = "button";
@@ -512,10 +720,13 @@
         removeExpense(e.id);
       });
 
+      actions.appendChild(btnEdit);
+      actions.appendChild(btn);
+
       li.appendChild(ico);
       li.appendChild(mid);
       li.appendChild(amt);
-      li.appendChild(btn);
+      li.appendChild(actions);
       elExpenseList.appendChild(li);
     });
   }
@@ -527,6 +738,10 @@
     renderBreakdown();
     renderExpenseList();
     renderPieChart();
+    renderFixedTemplatesList();
+    if (elSideMenu && !elSideMenu.hidden) {
+      renderSideMenuList();
+    }
   }
 
   function removeExpense(id) {
@@ -537,66 +752,63 @@
     persistAndRender();
   }
 
-  function renderHome() {
-    elYearDisplay.textContent = String(selectedYear);
-    var y = aggregateYear(selectedYear);
-    elYearIncome.textContent = formatMoneyVND(y.income);
-    elYearExpenses.textContent = formatMoneyVND(y.expenses);
-    elYearBalance.textContent = formatMoneyVND(y.balance);
-    var yb = elYearBalance.closest(".summary-item");
-    if (yb) yb.classList.toggle("negative", y.balance < 0);
-
-    elMonthList.innerHTML = "";
-    var keys = monthKeysForYear(selectedYear);
-    elMonthListEmpty.hidden = keys.length > 0;
-
-    keys.forEach(function (k) {
+  function renderSideMenuList() {
+    if (!elSideMenuList) return;
+    elSideMenuList.innerHTML = "";
+    allMenuMonthKeys().forEach(function (k) {
+      var has = monthHasData(k);
       var m = app.months[k];
-      var spent = totalExpensesForMonth(m);
-      var inc = m.income || 0;
+      var spent = m ? totalExpensesForMonth(m) : 0;
+      var inc = m ? m.income || 0 : 0;
       var bal = inc - spent;
 
       var li = document.createElement("li");
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "month-row";
+      btn.className =
+        "side-menu-item" + (k === activeMonthKey ? " is-active" : "");
 
       var cal = document.createElement("span");
-      cal.className = "month-row-ico";
+      cal.className = "side-menu-item-ico";
       cal.setAttribute("aria-hidden", "true");
       var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("class", "icon-svg icon-svg-muted");
-      svg.setAttribute("width", "22");
-      svg.setAttribute("height", "22");
+      svg.setAttribute("width", "20");
+      svg.setAttribute("height", "20");
       var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
       use.setAttribute("href", "#icon-calendar");
       svg.appendChild(use);
       cal.appendChild(svg);
 
       var txt = document.createElement("span");
-      txt.className = "month-row-text";
+      txt.className = "side-menu-item-text";
       var t1 = document.createElement("span");
-      t1.className = "month-row-title";
+      t1.className = "side-menu-item-title";
       t1.textContent = formatMonthKeyVi(k);
       var t2 = document.createElement("span");
-      t2.className = "month-row-meta";
-      t2.textContent =
-        "Thu " +
-        formatMoneyVND(inc) +
-        " · Chi " +
-        formatMoneyVND(spent) +
-        " · Còn " +
-        formatMoneyVND(bal);
+      t2.className =
+        "side-menu-item-status" + (has ? " has-data" : " no-data");
+      if (has) {
+        t2.textContent =
+          "Hạn mức " +
+          formatMoneyVND(inc) +
+          " · Chi " +
+          formatMoneyVND(spent) +
+          " · Còn " +
+          formatMoneyVND(bal);
+      } else {
+        t2.textContent = "Chưa có dữ liệu";
+      }
       txt.appendChild(t1);
       txt.appendChild(t2);
 
       var arr = document.createElement("span");
-      arr.className = "month-row-chevron";
+      arr.className = "side-menu-item-chevron";
       arr.setAttribute("aria-hidden", "true");
       var svg2 = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg2.setAttribute("class", "icon-svg");
-      svg2.setAttribute("width", "18");
-      svg2.setAttribute("height", "18");
+      svg2.setAttribute("width", "16");
+      svg2.setAttribute("height", "16");
       var use2 = document.createElementNS("http://www.w3.org/2000/svg", "use");
       use2.setAttribute("href", "#icon-chevron-right");
       svg2.appendChild(use2);
@@ -606,23 +818,48 @@
       btn.appendChild(txt);
       btn.appendChild(arr);
       btn.addEventListener("click", function () {
+        closeSideMenu(true);
         openMonth(k);
       });
 
       li.appendChild(btn);
-      elMonthList.appendChild(li);
+      elSideMenuList.appendChild(li);
     });
   }
 
-  function openMonth(key) {
+  function openSideMenu() {
+    if (!elSideMenu) return;
+    if (elMenuJumpMonth) elMenuJumpMonth.value = activeMonthKey || currentMonthKey();
+    renderSideMenuList();
+    elSideMenu.hidden = false;
+    elSideMenu.setAttribute("aria-hidden", "false");
+    document.body.classList.add("side-menu-open");
+    if (elBtnOpenMenu) elBtnOpenMenu.setAttribute("aria-expanded", "true");
+    setTimeout(function () {
+      if (elBtnCloseMenu) elBtnCloseMenu.focus();
+    }, 0);
+  }
+
+  function closeSideMenu(skipReturnFocus) {
+    if (!elSideMenu) return;
+    elSideMenu.hidden = true;
+    elSideMenu.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("side-menu-open");
+    if (elBtnOpenMenu) {
+      elBtnOpenMenu.setAttribute("aria-expanded", "false");
+      if (!skipReturnFocus) elBtnOpenMenu.focus();
+    }
+  }
+
+  function openMonth(key, opts) {
+    opts = opts || {};
     flushIncomeFromField();
     ensureMonth(key);
     state = app.months[key];
     state.expenses = state.expenses.map(normalizeExpenseRow);
+    syncFixedIntoMonth(state);
     activeMonthKey = key;
 
-    elHome.hidden = true;
-    elMonth.hidden = false;
     elMonthScreenTitle.textContent = formatMonthKeyVi(key);
 
     elIncome.value = formatAsNganDisplay(state.income);
@@ -630,15 +867,10 @@
     updateAmountPreview(elAmount, elExpensePreview);
 
     persistAndRender();
-  }
 
-  function goHome() {
-    flushIncomeFromField();
-    activeMonthKey = null;
-    state = null;
-    elMonth.hidden = true;
-    elHome.hidden = false;
-    renderHome();
+    if (!opts.fromPop && !opts.skipUrl) {
+      syncUrlToMonth(key);
+    }
   }
 
   function flushIncomeFromField() {
@@ -658,7 +890,6 @@
     elIncome.value = formatAsNganDisplay(state.income);
     updateAmountPreview(elIncome, elIncomePreview);
     persistAndRender();
-    renderHome();
   });
 
   elIncome.addEventListener("keydown", function (ev) {
@@ -666,6 +897,17 @@
       ev.preventDefault();
       elIncome.blur();
     }
+  });
+
+  window.addEventListener("popstate", function () {
+    var key = readThangFromUrl();
+    if (!key) {
+      key = currentMonthKey();
+      try {
+        history.replaceState({ thang: key }, "", buildUrlWithThang(key));
+      } catch (e) {}
+    }
+    openMonth(key, { fromPop: true, skipUrl: true });
   });
 
   window.addEventListener("pagehide", flushIncomeFromField);
@@ -681,17 +923,32 @@
       elAmount.focus();
       return;
     }
-    state.expenses.push({
+    var nameTrim = elName.value.trim();
+    var cat = elCategory.value;
+    var isFixed = elExpenseFixed && elExpenseFixed.checked;
+    var templateId = null;
+    if (isFixed) {
+      templateId = "ft-" + uid();
+      app.fixedTemplates.push({
+        id: templateId,
+        category: cat,
+        name: nameTrim,
+        amount: amount,
+      });
+    }
+    var row = {
       id: uid(),
-      category: elCategory.value,
-      name: elName.value.trim(),
+      category: cat,
+      name: nameTrim,
       amount: amount,
-    });
+    };
+    if (templateId) row.templateId = templateId;
+    state.expenses.push(row);
     elName.value = "";
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
+    if (elExpenseFixed) elExpenseFixed.checked = false;
     persistAndRender();
-    renderHome();
     elAmount.focus();
   });
 
@@ -699,40 +956,128 @@
     if (!state || !state.expenses.length) return;
     if (
       confirm(
-        "Xóa hết các khoản chi của tháng này? Thu nhập tháng giữ nguyên."
+        "Xóa hết các khoản chi của tháng này? Hạn mức tháng giữ nguyên. Các khoản cố định sẽ được thêm lại ngay."
       )
     ) {
       state.expenses = [];
+      syncFixedIntoMonth(state);
       persistAndRender();
-      renderHome();
     }
   });
 
-  elBtnBack.addEventListener("click", goHome);
+  elBtnOpenMenu.addEventListener("click", openSideMenu);
+  elBtnCloseMenu.addEventListener("click", closeSideMenu);
+  elSideMenuBackdrop.addEventListener("click", closeSideMenu);
 
-  elYearPrev.addEventListener("click", function () {
-    selectedYear -= 1;
-    renderHome();
+  function openEditExpenseDialog(expenseId) {
+    if (!state || !elEditDialog) return;
+    var e = state.expenses.find(function (x) {
+      return x.id === expenseId;
+    });
+    if (!e) return;
+    editingExpenseId = expenseId;
+    var cat = categoryMap[e.category] || e.category;
+    var line = e.name ? e.name + " · " + cat : cat;
+    elEditDesc.textContent = line;
+    elEditAmount.value = formatAsNganDisplay(e.amount);
+    updateAmountPreview(elEditAmount, elEditAmountPreview);
+    if (elEditTemplateNote) {
+      if (e.templateId) {
+        elEditTemplateNote.hidden = false;
+        elEditTemplateNote.removeAttribute("hidden");
+      } else {
+        elEditTemplateNote.hidden = true;
+        elEditTemplateNote.setAttribute("hidden", "");
+      }
+    }
+    elEditDialog.hidden = false;
+    elEditDialog.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    setTimeout(function () {
+      elEditAmount.focus();
+      elEditAmount.select();
+    }, 0);
+  }
+
+  function closeEditExpenseDialog() {
+    editingExpenseId = null;
+    if (elEditDialog) {
+      elEditDialog.hidden = true;
+      elEditDialog.setAttribute("aria-hidden", "true");
+    }
+    document.body.classList.remove("modal-open");
+  }
+
+  function saveEditExpenseDialog() {
+    if (!state || !editingExpenseId) return;
+    var e = state.expenses.find(function (x) {
+      return x.id === editingExpenseId;
+    });
+    if (!e) {
+      closeEditExpenseDialog();
+      return;
+    }
+    var amount = parseMoneyToVND(elEditAmount.value);
+    if (amount <= 0) {
+      elEditAmount.focus();
+      return;
+    }
+    e.amount = amount;
+    if (e.templateId) {
+      var t = findFixedTemplate(e.templateId);
+      if (t) t.amount = amount;
+    }
+    closeEditExpenseDialog();
+    persistAndRender();
+  }
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") {
+      if (elEditDialog && !elEditDialog.hidden) {
+        ev.preventDefault();
+        closeEditExpenseDialog();
+        return;
+      }
+      if (elSideMenu && !elSideMenu.hidden) {
+        closeSideMenu();
+      }
+    }
   });
 
-  elYearNext.addEventListener("click", function () {
-    selectedYear += 1;
-    renderHome();
-  });
-
-  elBtnOpenMonth.addEventListener("click", function () {
-    var v = elNewMonthInput && elNewMonthInput.value;
+  elMenuJumpBtn.addEventListener("click", function () {
+    var v = elMenuJumpMonth && elMenuJumpMonth.value;
     if (!v || v.length < 7) return;
+    closeSideMenu(true);
     openMonth(v);
   });
 
-  fillCategorySelect();
+  elEditSave.addEventListener("click", saveEditExpenseDialog);
+  elEditCancel.addEventListener("click", closeEditExpenseDialog);
+  elEditBackdrop.addEventListener("click", closeEditExpenseDialog);
+  elEditAmount.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      saveEditExpenseDialog();
+    }
+  });
+
+  fillCategorySelect(elCategory);
   bindAmountPreview(elIncome, elIncomePreview);
   bindAmountPreview(elAmount, elExpensePreview);
+  bindAmountPreview(elEditAmount, elEditAmountPreview);
 
-  if (elNewMonthInput) elNewMonthInput.value = currentMonthKey();
+  if (hasInvalidThangParam()) {
+    try {
+      history.replaceState({}, "", buildUrlWithoutThang());
+    } catch (e3) {}
+  }
 
-  elHome.hidden = false;
-  elMonth.hidden = true;
-  renderHome();
+  var initialKey = readThangFromUrl() || currentMonthKey();
+  if (readThangFromUrl() !== initialKey) {
+    try {
+      history.replaceState({ thang: initialKey }, "", buildUrlWithThang(initialKey));
+    } catch (e4) {}
+  }
+
+  openMonth(initialKey, { skipUrl: true });
 })();
