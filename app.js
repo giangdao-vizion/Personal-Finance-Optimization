@@ -116,10 +116,12 @@
   var state = loadState();
 
   var elIncome = document.getElementById("monthly-income");
+  var elIncomePreview = document.getElementById("income-amount-preview");
   var elIncomeUnitSlider = document.getElementById("income-unit-slider");
   var elCategory = document.getElementById("expense-category");
   var elName = document.getElementById("expense-name");
   var elAmount = document.getElementById("expense-amount");
+  var elExpensePreview = document.getElementById("expense-amount-preview");
   var elExpenseUnitSlider = document.getElementById("expense-unit-slider");
   var elForm = document.getElementById("expense-form");
   var elTbody = document.getElementById("expense-tbody");
@@ -157,21 +159,53 @@
     inputEl.placeholder = ph;
   }
 
-  function bindUnitSlider(container, inputEl) {
+  function formatPreviewPlainVND(vnd) {
+    if (!vnd || vnd <= 0) return "";
+    return vnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) + " \u20ab";
+  }
+
+  function updateAmountPreview(inputEl, previewEl, radioName) {
+    if (!previewEl) return;
+    var vnd = parseMoneyToVND(inputEl.value, getRadioGroupValue(radioName));
+    if (vnd > 0) {
+      previewEl.textContent = "= " + formatPreviewPlainVND(vnd);
+      previewEl.removeAttribute("hidden");
+      previewEl.setAttribute("aria-hidden", "false");
+    } else {
+      previewEl.textContent = "";
+      previewEl.setAttribute("hidden", "");
+      previewEl.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function bindAmountPreview(inputEl, previewEl, radioName) {
+    if (!inputEl || !previewEl) return;
+    function tick() {
+      updateAmountPreview(inputEl, previewEl, radioName);
+    }
+    inputEl.addEventListener("input", tick);
+    inputEl.addEventListener("focus", tick);
+    tick();
+  }
+
+  function bindUnitSlider(container, inputEl, previewEl, radioName) {
     if (!container) return;
     var radios = container.querySelectorAll('input[type="radio"]');
     function currentUnit() {
       var n = radios[0] && radios[0].name;
       return n ? getRadioGroupValue(n) : "trieu";
     }
+    var name = radioName || (radios[0] && radios[0].name) || "";
     function onChange() {
       if (looksLikeFormattedVND(inputEl.value)) inputEl.value = "";
       syncAmountPlaceholder(inputEl, currentUnit());
+      if (previewEl && name) updateAmountPreview(inputEl, previewEl, name);
     }
     radios.forEach(function (r) {
       r.addEventListener("change", onChange);
     });
     syncAmountPlaceholder(inputEl, currentUnit());
+    if (previewEl && name) updateAmountPreview(inputEl, previewEl, name);
   }
 
   function normalizeExpenseRow(row) {
@@ -315,6 +349,7 @@
     elIncome.value = formatAsTrieuCoefficient(state.income);
     setIncomeUnitTrieu();
     syncAmountPlaceholder(elIncome, "trieu");
+    updateAmountPreview(elIncome, elIncomePreview, "income-unit");
     persistAndRender();
   });
 
@@ -335,6 +370,7 @@
       elIncome.value = formatAsTrieuCoefficient(state.income);
       setIncomeUnitTrieu();
       syncAmountPlaceholder(elIncome, "trieu");
+      updateAmountPreview(elIncome, elIncomePreview, "income-unit");
       saveState(state);
     }
   }
@@ -362,6 +398,7 @@
     });
     elName.value = "";
     elAmount.value = "";
+    updateAmountPreview(elAmount, elExpensePreview, "expense-unit");
     persistAndRender();
     elAmount.focus();
   });
@@ -375,7 +412,9 @@
   });
 
   fillCategorySelect();
-  bindUnitSlider(elIncomeUnitSlider, elIncome);
-  bindUnitSlider(elExpenseUnitSlider, elAmount);
+  bindUnitSlider(elIncomeUnitSlider, elIncome, elIncomePreview, "income-unit");
+  bindUnitSlider(elExpenseUnitSlider, elAmount, elExpensePreview, "expense-unit");
+  bindAmountPreview(elIncome, elIncomePreview, "income-unit");
+  bindAmountPreview(elAmount, elExpensePreview, "expense-unit");
   persistAndRender();
 })();

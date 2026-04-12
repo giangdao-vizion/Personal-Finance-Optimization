@@ -44,15 +44,18 @@
         <span class="field-label">Số tiền</span>
         <span class="field-hint">Nhập theo triệu hoặc trăm nghìn — gạt nút bên dưới để đổi đơn vị (mặc định: triệu).</span>
         <div class="amount-stack">
-          <input
-            type="text"
-            id="monthly-income"
-            class="amount-input"
-            inputmode="decimal"
-            autocomplete="off"
-            enterkeyhint="done"
-            placeholder="Ví dụ: 25"
-          />
+          <div class="amount-input-wrap">
+            <span id="income-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
+            <input
+              type="text"
+              id="monthly-income"
+              class="amount-input"
+              inputmode="decimal"
+              autocomplete="off"
+              enterkeyhint="done"
+              placeholder="Ví dụ: 25"
+            />
+          </div>
           <div
             class="unit-slider"
             id="income-unit-slider"
@@ -100,15 +103,18 @@
         <label class="field">
           <span class="field-label">Số tiền</span>
           <div class="amount-stack">
-            <input
-              type="text"
-              id="expense-amount"
-              class="amount-input"
-              inputmode="decimal"
-              required
-              enterkeyhint="done"
-              placeholder="Ví dụ: 1,5"
-            />
+            <div class="amount-input-wrap">
+              <span id="expense-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
+              <input
+                type="text"
+                id="expense-amount"
+                class="amount-input"
+                inputmode="decimal"
+                required
+                enterkeyhint="done"
+                placeholder="Ví dụ: 1,5"
+              />
+            </div>
             <div
               class="unit-slider"
               id="expense-unit-slider"
