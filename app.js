@@ -80,6 +80,33 @@
     );
   }
 
+  /** Hiển thị ngắn cho tổng quan: 250k, 1,5tr, 20tr, 1,2tỷ */
+  function formatShortDecimal(x) {
+    var r = Math.round(x * 100) / 100;
+    if (Math.abs(r - Math.round(r)) < 1e-8) return String(Math.round(r));
+    var s = r.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    return s.replace(".", ",");
+  }
+
+  function formatMoneyVNDShort(n) {
+    if (typeof n !== "number" || isNaN(n)) n = 0;
+    var sign = "";
+    if (n < 0) {
+      sign = "-";
+      n = Math.abs(n);
+    }
+    n = Math.round(n);
+    if (n === 0) return sign + "0 \u20ab";
+    if (n < 1000) return sign + n + " \u20ab";
+    if (n < 1e6) {
+      return sign + formatShortDecimal(n / 1000) + "k \u20ab";
+    }
+    if (n < 1e9) {
+      return sign + formatShortDecimal(n / 1e6) + "tr \u20ab";
+    }
+    return sign + formatShortDecimal(n / 1e9) + "tỷ \u20ab";
+  }
+
   function uid() {
     return "e-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
   }
@@ -93,6 +120,18 @@
         amount: 20000000,
       },
     ];
+  }
+
+  function defaultSettings() {
+    return { defaultLimit: 0 };
+  }
+
+  function normalizeSettings(s) {
+    var out = s && typeof s === "object" ? s : {};
+    var lim = out.defaultLimit;
+    out.defaultLimit =
+      typeof lim === "number" && !isNaN(lim) ? Math.max(0, Math.round(lim)) : 0;
+    return out;
   }
 
   function loadAppData() {
@@ -109,7 +148,12 @@
         } else {
           fixedTemplates = [];
         }
-        return { months: months, fixedTemplates: fixedTemplates };
+        var settings = normalizeSettings(d.settings);
+        return {
+          months: months,
+          fixedTemplates: fixedTemplates,
+          settings: settings,
+        };
       }
     } catch (e) {}
     var months = {};
@@ -130,6 +174,7 @@
             JSON.stringify({
               months: months,
               fixedTemplates: defaultFixedTemplates(),
+              settings: defaultSettings(),
             })
           );
         } catch (e3) {}
@@ -138,6 +183,7 @@
     return {
       months: months,
       fixedTemplates: defaultFixedTemplates(),
+      settings: defaultSettings(),
     };
   }
 
@@ -148,6 +194,7 @@
         JSON.stringify({
           months: app.months,
           fixedTemplates: app.fixedTemplates,
+          settings: app.settings,
         })
       );
     } catch (e) {}
@@ -155,14 +202,50 @@
 
   var app = loadAppData();
   if (!Array.isArray(app.fixedTemplates)) app.fixedTemplates = defaultFixedTemplates();
+  if (!app.settings || typeof app.settings !== "object") app.settings = defaultSettings();
+  app.settings = normalizeSettings(app.settings);
+
+  function migrateMonthIncomeUserSet(m) {
+    if (!m || (m.incomeUserSet !== undefined && m.incomeUserSet !== null)) return;
+    // Chỉ coi đã chỉnh hạn mức khi từng có thu nhập/hạn mức > 0 (dữ liệu cũ). Có chi tiêu ≠ đã đặt hạn mức.
+    if ((m.income || 0) > 0) {
+      m.incomeUserSet = true;
+    } else {
+      m.incomeUserSet = false;
+    }
+  }
+
+  function migrateAllMonthsIncomeUserSet() {
+    Object.keys(app.months).forEach(function (k) {
+      migrateMonthIncomeUserSet(app.months[k]);
+    });
+  }
+
+  migrateAllMonthsIncomeUserSet();
   var activeMonthKey = null;
   var state = null;
   var editingExpenseId = null;
+  var editingFixedTemplateId = null;
+  var incomeProgrammatic = false;
+  var incomeDirty = false;
+
+  function getDefaultMonthlyLimit() {
+    return app.settings && typeof app.settings.defaultLimit === "number"
+      ? Math.max(0, Math.round(app.settings.defaultLimit))
+      : 0;
+  }
 
   function ensureMonth(k) {
-    if (!app.months[k]) app.months[k] = { income: 0, expenses: [] };
+    if (!app.months[k]) {
+      app.months[k] = {
+        income: 0,
+        expenses: [],
+        incomeUserSet: false,
+      };
+    }
     if (!Array.isArray(app.months[k].expenses)) app.months[k].expenses = [];
     if (typeof app.months[k].income !== "number") app.months[k].income = 0;
+    migrateMonthIncomeUserSet(app.months[k]);
     return app.months[k];
   }
 
@@ -256,6 +339,12 @@
   var elMonthScreenTitle = document.getElementById("month-screen-title");
   var elIncome = document.getElementById("monthly-income");
   var elIncomePreview = document.getElementById("income-amount-preview");
+  var elSummaryCard = document.getElementById("summary-card");
+  var elLimitViewMode = document.getElementById("limit-view-mode");
+  var elLimitEditPanel = document.getElementById("limit-edit-panel");
+  var elBtnLimitEdit = document.getElementById("btn-limit-edit");
+  var elBtnLimitDone = document.getElementById("btn-limit-done");
+  var elBtnLimitCancel = document.getElementById("btn-limit-cancel");
   var elCategory = document.getElementById("expense-category");
   var elName = document.getElementById("expense-name");
   var elAmount = document.getElementById("expense-amount");
@@ -283,6 +372,29 @@
   var elBtnCloseMenu = document.getElementById("btn-close-menu");
   var elMenuJumpMonth = document.getElementById("menu-jump-month");
   var elMenuJumpBtn = document.getElementById("menu-jump-btn");
+
+  var elViewMonth = document.getElementById("view-month");
+  var elViewSettings = document.getElementById("view-settings");
+  var elBtnOpenSettings = document.getElementById("btn-open-settings");
+  var elBtnCloseSettings = document.getElementById("btn-close-settings");
+  var elSettingsDefaultLimit = document.getElementById("settings-default-limit");
+  var elSettingsDefaultLimitPreview = document.getElementById("settings-default-limit-preview");
+  var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
+  var elSettingsAddFixedForm = document.getElementById("settings-add-fixed-form");
+  var elSettingsAddFixedCategory = document.getElementById("settings-add-fixed-category");
+  var elSettingsAddFixedName = document.getElementById("settings-add-fixed-name");
+  var elSettingsAddFixedAmount = document.getElementById("settings-add-fixed-amount");
+  var elSettingsAddFixedAmountPreview = document.getElementById("settings-add-fixed-amount-preview");
+
+  var elEditFixedDialog = document.getElementById("edit-fixed-template-dialog");
+  var elEditFixedBackdrop = document.getElementById("edit-fixed-template-backdrop");
+  var elEditFixedTitle = document.getElementById("edit-fixed-template-title");
+  var elEditFixedCategory = document.getElementById("edit-fixed-template-category");
+  var elEditFixedName = document.getElementById("edit-fixed-template-name");
+  var elEditFixedAmount = document.getElementById("edit-fixed-template-amount");
+  var elEditFixedAmountPreview = document.getElementById("edit-fixed-template-amount-preview");
+  var elEditFixedSave = document.getElementById("edit-fixed-template-save");
+  var elEditFixedCancel = document.getElementById("edit-fixed-template-cancel");
 
   var elFixedTemplatesList = document.getElementById("fixed-templates-list");
 
@@ -377,6 +489,24 @@
       if (app.fixedTemplates[i].id === templateId) return app.fixedTemplates[i];
     }
     return null;
+  }
+
+  function syncExpenseRowsFromTemplate(t) {
+    if (!t || !t.id) return;
+    Object.keys(app.months).forEach(function (k) {
+      var m = app.months[k];
+      if (!m || !Array.isArray(m.expenses)) return;
+      m.expenses.forEach(function (e) {
+        if (e.templateId === t.id) {
+          e.category = t.category;
+          e.name = typeof t.name === "string" ? t.name.trim() : "";
+          e.amount =
+            typeof t.amount === "number" && t.amount >= 0
+              ? Math.round(t.amount)
+              : 0;
+        }
+      });
+    });
   }
 
   function totalExpenses() {
@@ -537,11 +667,14 @@
     var spent = totalExpenses();
     var balance = income - spent;
 
-    elSumIncome.textContent = formatMoneyVND(income);
-    elSumExpenses.textContent = formatMoneyVND(spent);
-    elSumBalance.textContent = formatMoneyVND(balance);
+    elSumIncome.textContent = formatMoneyVNDShort(income);
+    elSumIncome.title = formatMoneyVND(income);
+    elSumExpenses.textContent = formatMoneyVNDShort(spent);
+    elSumExpenses.title = formatMoneyVND(spent);
+    elSumBalance.textContent = formatMoneyVNDShort(balance);
+    elSumBalance.title = formatMoneyVND(balance);
 
-    var highlight = elSumBalance.closest(".summary-item");
+    var highlight = elSumBalance.closest(".summary-row-balance");
     if (highlight) {
       highlight.classList.toggle("negative", balance < 0);
     }
@@ -604,16 +737,26 @@
     return svg;
   }
 
-  function renderFixedTemplatesList() {
-    if (!elFixedTemplatesList) return;
-    elFixedTemplatesList.innerHTML = "";
+  function removeFixedTemplateById(templateId) {
+    app.fixedTemplates = app.fixedTemplates.filter(function (x) {
+      return x.id !== templateId;
+    });
+    saveAppData();
+    renderFixedTemplatesList();
+  }
+
+  function renderFixedTemplatesInto(ul, showEdit) {
+    if (!ul) return;
+    ul.innerHTML = "";
     if (!Array.isArray(app.fixedTemplates) || !app.fixedTemplates.length) {
       var empty = document.createElement("li");
       empty.className = "fixed-template-row";
-      empty.textContent = "Chưa có khoản cố định — thêm bên dưới.";
+      empty.textContent = showEdit
+        ? "Chưa có khoản cố định — thêm bên dưới hoặc đánh dấu khi thêm chi ở trang tháng."
+        : "Chưa có khoản cố định — bật “Cố định hàng tháng” khi thêm hoặc vào Cài đặt.";
       empty.style.color = "var(--muted)";
       empty.style.fontSize = "0.8125rem";
-      elFixedTemplatesList.appendChild(empty);
+      ul.appendChild(empty);
       return;
     }
     app.fixedTemplates.forEach(function (t) {
@@ -632,30 +775,48 @@
       mid.appendChild(title);
       mid.appendChild(sub);
 
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-icon btn-icon-danger";
-      btn.setAttribute("aria-label", "Xóa khỏi khoản cố định");
-      btn.appendChild(iconTrashSvg());
-      btn.addEventListener("click", function () {
+      var btnDel = document.createElement("button");
+      btnDel.type = "button";
+      btnDel.className = "btn-icon btn-icon-danger";
+      btnDel.setAttribute("aria-label", "Xóa khỏi khoản cố định");
+      btnDel.appendChild(iconTrashSvg());
+      btnDel.addEventListener("click", function () {
         if (
           !confirm(
-            "Xóa khoản cố định này? Các tháng sau sẽ không tự thêm nữa. Dòng trong tháng hiện tại giữ nguyên — bạn có thể xóa tay trong danh sách chi."
+            "Xóa khoản cố định này? Các tháng sau sẽ không tự thêm nữa. Dòng trong các tháng giữ nguyên — bạn có thể xóa tay trong danh sách chi."
           )
         ) {
           return;
         }
-        app.fixedTemplates = app.fixedTemplates.filter(function (x) {
-          return x.id !== t.id;
-        });
-        saveAppData();
-        renderFixedTemplatesList();
+        removeFixedTemplateById(t.id);
       });
 
-      li.appendChild(mid);
-      li.appendChild(btn);
-      elFixedTemplatesList.appendChild(li);
+      if (showEdit) {
+        var actions = document.createElement("div");
+        actions.className = "fixed-template-row-actions";
+        var btnEdit = document.createElement("button");
+        btnEdit.type = "button";
+        btnEdit.className = "btn-icon btn-icon-muted";
+        btnEdit.setAttribute("aria-label", "Sửa khoản cố định");
+        btnEdit.appendChild(iconPencilSvg());
+        btnEdit.addEventListener("click", function () {
+          openEditFixedTemplateDialog(t.id);
+        });
+        actions.appendChild(btnEdit);
+        actions.appendChild(btnDel);
+        li.appendChild(mid);
+        li.appendChild(actions);
+      } else {
+        li.appendChild(mid);
+        li.appendChild(btnDel);
+      }
+      ul.appendChild(li);
     });
+  }
+
+  function renderFixedTemplatesList() {
+    renderFixedTemplatesInto(elFixedTemplatesList, false);
+    renderFixedTemplatesInto(elSettingsFixedList, true);
   }
 
   function renderExpenseList() {
@@ -829,6 +990,7 @@
 
   function openSideMenu() {
     if (!elSideMenu) return;
+    cancelLimitEdit();
     if (elMenuJumpMonth) elMenuJumpMonth.value = activeMonthKey || currentMonthKey();
     renderSideMenuList();
     elSideMenu.hidden = false;
@@ -851,19 +1013,125 @@
     }
   }
 
+  function setIncomeFieldFromState() {
+    if (!state || !elIncome) return;
+    incomeProgrammatic = true;
+    incomeDirty = false;
+    elIncome.value = formatAsNganDisplay(state.income);
+    updateAmountPreview(elIncome, elIncomePreview);
+    incomeProgrammatic = false;
+  }
+
+  function isLimitEditOpen() {
+    return elLimitEditPanel && !elLimitEditPanel.hidden;
+  }
+
+  function closeLimitEditPanel() {
+    if (!elLimitEditPanel || !elLimitViewMode) return;
+    elLimitEditPanel.hidden = true;
+    elLimitViewMode.hidden = false;
+    if (elBtnLimitEdit) elBtnLimitEdit.setAttribute("aria-expanded", "false");
+    if (elSummaryCard) elSummaryCard.classList.remove("summary-limit-editing");
+  }
+
+  function cancelLimitEdit() {
+    incomeDirty = false;
+    if (!isLimitEditOpen()) return;
+    if (state && elIncome) setIncomeFieldFromState();
+    closeLimitEditPanel();
+  }
+
+  function openLimitEdit() {
+    if (!state || !elLimitEditPanel || !elLimitViewMode) return;
+    if (isLimitEditOpen()) return;
+    setIncomeFieldFromState();
+    elLimitEditPanel.hidden = false;
+    elLimitViewMode.hidden = true;
+    if (elBtnLimitEdit) elBtnLimitEdit.setAttribute("aria-expanded", "true");
+    if (elSummaryCard) elSummaryCard.classList.add("summary-limit-editing");
+    setTimeout(function () {
+      elIncome.focus();
+      elIncome.select();
+    }, 0);
+  }
+
+  function applyLimitEditAndClose(shouldRender) {
+    if (!state || !elIncome || !isLimitEditOpen()) return;
+    var v = parseMoneyToVND(elIncome.value);
+    state.incomeUserSet = true;
+    incomeDirty = false;
+    state.income = v;
+    setIncomeFieldFromState();
+    closeLimitEditPanel();
+    if (shouldRender) persistAndRender();
+    else saveAppData();
+  }
+
+  function showMonthView() {
+    if (elViewSettings) {
+      elViewSettings.hidden = true;
+      elViewSettings.setAttribute("aria-hidden", "true");
+    }
+    if (elViewMonth) {
+      elViewMonth.hidden = false;
+      elViewMonth.removeAttribute("aria-hidden");
+    }
+    document.body.classList.remove("settings-open");
+  }
+
+  function showSettingsView() {
+    if (elViewMonth) {
+      elViewMonth.hidden = true;
+      elViewMonth.setAttribute("aria-hidden", "true");
+    }
+    if (elViewSettings) {
+      elViewSettings.hidden = false;
+      elViewSettings.removeAttribute("aria-hidden");
+    }
+    document.body.classList.add("settings-open");
+  }
+
+  function openSettings() {
+    cancelLimitEdit();
+    flushIncomeFromField();
+    closeSideMenu(true);
+    closeEditExpenseDialog();
+    closeEditFixedTemplateDialog();
+    if (elSettingsDefaultLimit) {
+      elSettingsDefaultLimit.value = formatAsNganDisplay(getDefaultMonthlyLimit());
+      updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+    }
+    renderFixedTemplatesList();
+    showSettingsView();
+    setTimeout(function () {
+      if (elBtnCloseSettings) elBtnCloseSettings.focus();
+    }, 0);
+  }
+
+  function closeSettings() {
+    showMonthView();
+    if (activeMonthKey) {
+      openMonth(activeMonthKey, { skipUrl: true });
+    }
+    if (elBtnOpenSettings) elBtnOpenSettings.focus();
+  }
+
   function openMonth(key, opts) {
     opts = opts || {};
+    cancelLimitEdit();
     flushIncomeFromField();
     ensureMonth(key);
     state = app.months[key];
     state.expenses = state.expenses.map(normalizeExpenseRow);
+    if (!state.incomeUserSet) {
+      state.income = getDefaultMonthlyLimit();
+    }
     syncFixedIntoMonth(state);
     activeMonthKey = key;
 
     elMonthScreenTitle.textContent = formatMonthKeyVi(key);
 
-    elIncome.value = formatAsNganDisplay(state.income);
-    updateAmountPreview(elIncome, elIncomePreview);
+    setIncomeFieldFromState();
     updateAmountPreview(elAmount, elExpensePreview);
 
     persistAndRender();
@@ -875,21 +1143,21 @@
 
   function flushIncomeFromField() {
     if (!activeMonthKey || !state || !elIncome) return;
-    var v = parseMoneyToVND(elIncome.value);
-    if (v !== state.income) {
-      state.income = v;
-      elIncome.value = formatAsNganDisplay(state.income);
-      updateAmountPreview(elIncome, elIncomePreview);
-      saveAppData();
-    }
+    if (!isLimitEditOpen()) return;
+    applyLimitEditAndClose(false);
   }
 
-  elIncome.addEventListener("blur", function () {
+  elIncome.addEventListener("input", function () {
+    if (incomeProgrammatic || !state) return;
+    incomeDirty = true;
+  });
+
+  elIncome.addEventListener("blur", function (ev) {
     if (!state) return;
-    state.income = parseMoneyToVND(elIncome.value);
-    elIncome.value = formatAsNganDisplay(state.income);
-    updateAmountPreview(elIncome, elIncomePreview);
-    persistAndRender();
+    if (!isLimitEditOpen()) return;
+    var rt = ev.relatedTarget;
+    if (rt && elLimitEditPanel && elLimitEditPanel.contains(rt)) return;
+    applyLimitEditAndClose(true);
   });
 
   elIncome.addEventListener("keydown", function (ev) {
@@ -899,7 +1167,17 @@
     }
   });
 
+  if (elBtnLimitEdit) elBtnLimitEdit.addEventListener("click", openLimitEdit);
+  if (elBtnLimitDone) elBtnLimitDone.addEventListener("click", function () {
+    applyLimitEditAndClose(true);
+  });
+  if (elBtnLimitCancel) elBtnLimitCancel.addEventListener("click", cancelLimitEdit);
+
   window.addEventListener("popstate", function () {
+    showMonthView();
+    cancelLimitEdit();
+    closeEditFixedTemplateDialog();
+    closeEditExpenseDialog();
     var key = readThangFromUrl();
     if (!key) {
       key = currentMonthKey();
@@ -969,8 +1247,56 @@
   elBtnCloseMenu.addEventListener("click", closeSideMenu);
   elSideMenuBackdrop.addEventListener("click", closeSideMenu);
 
+  elBtnOpenSettings.addEventListener("click", openSettings);
+  elBtnCloseSettings.addEventListener("click", closeSettings);
+
+  if (elSettingsDefaultLimit) {
+    elSettingsDefaultLimit.addEventListener("blur", function () {
+      app.settings.defaultLimit = parseMoneyToVND(elSettingsDefaultLimit.value);
+      elSettingsDefaultLimit.value = formatAsNganDisplay(app.settings.defaultLimit);
+      updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+      saveAppData();
+    });
+  }
+
+  elSettingsAddFixedForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var amount = parseMoneyToVND(elSettingsAddFixedAmount.value);
+    if (amount <= 0) {
+      elSettingsAddFixedAmount.focus();
+      return;
+    }
+    var cat = elSettingsAddFixedCategory.value;
+    if (!categoryMap[cat]) return;
+    app.fixedTemplates.push({
+      id: "ft-" + uid(),
+      category: cat,
+      name: elSettingsAddFixedName.value.trim(),
+      amount: amount,
+    });
+    elSettingsAddFixedName.value = "";
+    elSettingsAddFixedAmount.value = "";
+    updateAmountPreview(elSettingsAddFixedAmount, elSettingsAddFixedAmountPreview);
+    saveAppData();
+    if (state) syncFixedIntoMonth(state);
+    renderFixedTemplatesList();
+    if (activeMonthKey && state) persistAndRender();
+  });
+
+  elEditFixedSave.addEventListener("click", saveEditFixedTemplateDialog);
+  elEditFixedCancel.addEventListener("click", closeEditFixedTemplateDialog);
+  elEditFixedBackdrop.addEventListener("click", closeEditFixedTemplateDialog);
+  elEditFixedAmount.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      saveEditFixedTemplateDialog();
+    }
+  });
+
   function openEditExpenseDialog(expenseId) {
     if (!state || !elEditDialog) return;
+    cancelLimitEdit();
+    closeEditFixedTemplateDialog();
     var e = state.expenses.find(function (x) {
       return x.id === expenseId;
     });
@@ -1005,7 +1331,62 @@
       elEditDialog.hidden = true;
       elEditDialog.setAttribute("aria-hidden", "true");
     }
-    document.body.classList.remove("modal-open");
+    if (!elEditFixedDialog || elEditFixedDialog.hidden) {
+      document.body.classList.remove("modal-open");
+    }
+  }
+
+  function closeEditFixedTemplateDialog() {
+    editingFixedTemplateId = null;
+    if (elEditFixedDialog) {
+      elEditFixedDialog.hidden = true;
+      elEditFixedDialog.setAttribute("aria-hidden", "true");
+    }
+    if (!elEditDialog || elEditDialog.hidden) {
+      document.body.classList.remove("modal-open");
+    }
+  }
+
+  function openEditFixedTemplateDialog(templateId) {
+    var t = findFixedTemplate(templateId);
+    if (!t || !elEditFixedDialog) return;
+    editingFixedTemplateId = templateId;
+    if (elEditFixedTitle) elEditFixedTitle.textContent = "Sửa khoản cố định";
+    elEditFixedCategory.value = t.category;
+    elEditFixedName.value = t.name || "";
+    elEditFixedAmount.value = formatAsNganDisplay(t.amount);
+    updateAmountPreview(elEditFixedAmount, elEditFixedAmountPreview);
+    elEditFixedDialog.hidden = false;
+    elEditFixedDialog.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    setTimeout(function () {
+      elEditFixedAmount.focus();
+      elEditFixedAmount.select();
+    }, 0);
+  }
+
+  function saveEditFixedTemplateDialog() {
+    if (!editingFixedTemplateId) return;
+    var t = findFixedTemplate(editingFixedTemplateId);
+    if (!t) {
+      closeEditFixedTemplateDialog();
+      return;
+    }
+    var cat = elEditFixedCategory.value;
+    if (!categoryMap[cat]) return;
+    var amount = parseMoneyToVND(elEditFixedAmount.value);
+    if (amount <= 0) {
+      elEditFixedAmount.focus();
+      return;
+    }
+    t.category = cat;
+    t.name = elEditFixedName.value.trim();
+    t.amount = amount;
+    syncExpenseRowsFromTemplate(t);
+    saveAppData();
+    closeEditFixedTemplateDialog();
+    renderFixedTemplatesList();
+    if (activeMonthKey && state) persistAndRender();
   }
 
   function saveEditExpenseDialog() {
@@ -1033,6 +1414,21 @@
 
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Escape") {
+      if (isLimitEditOpen()) {
+        ev.preventDefault();
+        cancelLimitEdit();
+        return;
+      }
+      if (elEditFixedDialog && !elEditFixedDialog.hidden) {
+        ev.preventDefault();
+        closeEditFixedTemplateDialog();
+        return;
+      }
+      if (elViewSettings && !elViewSettings.hidden) {
+        ev.preventDefault();
+        closeSettings();
+        return;
+      }
       if (elEditDialog && !elEditDialog.hidden) {
         ev.preventDefault();
         closeEditExpenseDialog();
@@ -1062,9 +1458,14 @@
   });
 
   fillCategorySelect(elCategory);
+  fillCategorySelect(elSettingsAddFixedCategory);
+  fillCategorySelect(elEditFixedCategory);
   bindAmountPreview(elIncome, elIncomePreview);
   bindAmountPreview(elAmount, elExpensePreview);
   bindAmountPreview(elEditAmount, elEditAmountPreview);
+  bindAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+  bindAmountPreview(elSettingsAddFixedAmount, elSettingsAddFixedAmountPreview);
+  bindAmountPreview(elEditFixedAmount, elEditFixedAmountPreview);
 
   if (hasInvalidThangParam()) {
     try {

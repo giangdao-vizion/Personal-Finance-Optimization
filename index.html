@@ -36,56 +36,75 @@
     <symbol id="icon-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
     </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+    </symbol>
   </svg>
 
-  <div class="app">
+  <div class="app" id="view-month">
     <header class="month-topbar month-topbar-main">
-      <span class="month-topbar-spacer" aria-hidden="true"></span>
+      <button type="button" id="btn-open-menu" class="btn-icon" aria-label="Mở danh sách tháng" aria-expanded="false" aria-controls="side-menu-panel">
+        <svg class="icon-svg" width="22" height="22"><use href="#icon-menu" /></svg>
+      </button>
       <div class="month-topbar-text">
         <p class="eyebrow month-topbar-eyebrow">Chi tiêu gia đình</p>
         <h1 id="month-screen-title" class="month-topbar-title">Tháng</h1>
       </div>
-      <button type="button" id="btn-open-menu" class="btn-icon" aria-label="Mở danh sách tháng" aria-expanded="false" aria-controls="side-menu-panel">
-        <svg class="icon-svg" width="22" height="22"><use href="#icon-menu" /></svg>
+      <button type="button" id="btn-open-settings" class="btn-icon" aria-label="Mở cài đặt">
+        <svg class="icon-svg" width="22" height="22"><use href="#icon-settings" /></svg>
       </button>
     </header>
 
-    <section class="card summary-card card-elevated" aria-labelledby="summary-heading">
+    <section id="summary-card" class="card summary-card card-elevated" aria-labelledby="summary-heading">
       <h2 id="summary-heading" class="card-title">Tổng quan tháng</h2>
-      <dl class="summary-grid">
-        <div class="summary-item">
+      <dl class="summary-unified">
+        <div class="summary-row summary-row-limit">
           <dt>Hạn mức</dt>
-          <dd id="sum-income">0 ₫</dd>
+          <dd class="summary-dd summary-dd-limit">
+            <div class="limit-view-mode" id="limit-view-mode">
+              <span id="sum-income" class="summary-value">0 ₫</span>
+              <button
+                type="button"
+                id="btn-limit-edit"
+                class="btn-icon btn-icon-muted summary-limit-edit-btn"
+                aria-label="Sửa hạn mức tháng"
+                aria-expanded="false"
+                aria-controls="limit-edit-panel"
+              >
+                <svg class="icon-svg" width="20" height="20"><use href="#icon-pencil" /></svg>
+              </button>
+            </div>
+            <div id="limit-edit-panel" class="limit-edit-panel" hidden>
+              <p class="field-hint limit-edit-hint">Nghìn đồng (×1.000). Ví dụ <strong>25000</strong> = 25 triệu; có thể dán 25.000.000.</p>
+              <div class="amount-input-wrap">
+                <span id="income-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
+                <input
+                  type="text"
+                  id="monthly-income"
+                  class="amount-input amount-input-limit-edit"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  enterkeyhint="done"
+                  placeholder="Ví dụ: 25000"
+                />
+              </div>
+              <div class="limit-edit-actions">
+                <button type="button" id="btn-limit-done" class="btn btn-primary btn-sm">Xong</button>
+                <button type="button" id="btn-limit-cancel" class="btn btn-ghost btn-sm">Hủy</button>
+              </div>
+            </div>
+          </dd>
         </div>
-        <div class="summary-item">
+        <div class="summary-row">
           <dt>Đã chi</dt>
-          <dd id="sum-expenses">0 ₫</dd>
+          <dd id="sum-expenses" class="summary-dd summary-value">0 ₫</dd>
         </div>
-        <div class="summary-item highlight summary-balance">
+        <div class="summary-row summary-row-balance">
           <dt>Còn lại</dt>
-          <dd id="sum-balance">0 ₫</dd>
+          <dd id="sum-balance" class="summary-dd summary-value summary-balance-dd">0 ₫</dd>
         </div>
       </dl>
-    </section>
-
-    <section class="card income-card" aria-labelledby="income-heading">
-      <h2 id="income-heading" class="card-title">Hạn mức tháng</h2>
-      <label class="field">
-        <span class="field-label">Số tiền (nghìn đồng)</span>
-        <span class="field-hint">Ngân sách tối đa cho tháng. Mỗi đơn vị = 1.000 ₫. Ví dụ <strong>1000</strong> = 1 triệu; <strong>25000</strong> = 25 triệu. Có thể dán 25.000.000.</span>
-        <div class="amount-input-wrap">
-          <span id="income-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
-          <input
-            type="text"
-            id="monthly-income"
-            class="amount-input"
-            inputmode="decimal"
-            autocomplete="off"
-            enterkeyhint="done"
-            placeholder="Ví dụ: 25000 (= 25 triệu)"
-          />
-        </div>
-      </label>
     </section>
 
     <section class="card add-card" aria-labelledby="add-heading">
@@ -182,6 +201,65 @@
     </details>
   </div>
 
+  <div id="view-settings" class="app view-settings" hidden aria-hidden="true">
+    <header class="month-topbar month-topbar-main settings-topbar">
+      <button type="button" id="btn-close-settings" class="btn-icon" aria-label="Đóng cài đặt">
+        <svg class="icon-svg" width="22" height="22"><use href="#icon-close" /></svg>
+      </button>
+      <div class="month-topbar-text">
+        <p class="eyebrow month-topbar-eyebrow">Ứng dụng</p>
+        <h1 class="month-topbar-title">Cài đặt</h1>
+      </div>
+      <span class="month-topbar-spacer" aria-hidden="true"></span>
+    </header>
+
+    <section class="card" aria-labelledby="settings-limit-heading">
+      <h2 id="settings-limit-heading" class="card-title">Hạn mức chi tiêu mặc định</h2>
+      <p class="field-hint settings-hint">Áp dụng cho các tháng bạn chưa chỉnh hạn mức riêng. Tháng đã chỉnh vẫn giữ số của tháng đó.</p>
+      <label class="field">
+        <span class="field-label">Số tiền (nghìn đồng)</span>
+        <div class="amount-input-wrap">
+          <span id="settings-default-limit-preview" class="amount-preview" hidden aria-hidden="true"></span>
+          <input
+            type="text"
+            id="settings-default-limit"
+            class="amount-input"
+            inputmode="decimal"
+            autocomplete="off"
+            placeholder="0 = chưa đặt mặc định"
+          />
+        </div>
+      </label>
+    </section>
+
+    <section class="card" aria-labelledby="settings-fixed-heading">
+      <h2 id="settings-fixed-heading" class="card-title">Khoản chi cố định</h2>
+      <p class="field-hint settings-hint">Danh sách chung với khoản bạn đánh dấu &quot;Cố định hàng tháng&quot; khi thêm chi. Sửa ở đây sẽ cập nhật mọi tháng đang có dòng gắn với mẫu này.</p>
+      <ul id="settings-fixed-templates-list" class="fixed-templates-list settings-fixed-list"></ul>
+      <form id="settings-add-fixed-form" class="expense-form settings-add-fixed-form">
+        <p class="fixed-form-section-title">Thêm khoản cố định</p>
+        <label class="field">
+          <span class="field-label">Danh mục</span>
+          <div class="select-wrap">
+            <select id="settings-add-fixed-category" required></select>
+          </div>
+        </label>
+        <label class="field">
+          <span class="field-label">Tên khoản <span class="optional">(không bắt buộc)</span></span>
+          <input type="text" id="settings-add-fixed-name" maxlength="120" placeholder="Ví dụ: Tiết kiệm" />
+        </label>
+        <label class="field">
+          <span class="field-label">Số tiền (nghìn đồng)</span>
+          <div class="amount-input-wrap">
+            <span id="settings-add-fixed-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
+            <input type="text" id="settings-add-fixed-amount" class="amount-input" inputmode="decimal" required placeholder="Ví dụ: 20000" />
+          </div>
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">Thêm khoản cố định</button>
+      </form>
+    </section>
+  </div>
+
   <div id="side-menu" class="side-menu" hidden>
     <div class="side-menu-backdrop" id="side-menu-backdrop" tabindex="-1"></div>
     <aside
@@ -209,6 +287,39 @@
         </div>
       </div>
     </aside>
+  </div>
+
+  <div id="edit-fixed-template-dialog" class="modal" hidden aria-hidden="true">
+    <div class="modal-backdrop" id="edit-fixed-template-backdrop" tabindex="-1"></div>
+    <div
+      class="modal-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-fixed-template-title"
+    >
+      <h2 id="edit-fixed-template-title" class="modal-title">Sửa khoản cố định</h2>
+      <label class="field">
+        <span class="field-label">Danh mục</span>
+        <div class="select-wrap">
+          <select id="edit-fixed-template-category" required></select>
+        </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Tên khoản <span class="optional">(không bắt buộc)</span></span>
+        <input type="text" id="edit-fixed-template-name" maxlength="120" />
+      </label>
+      <label class="field">
+        <span class="field-label">Số tiền (nghìn đồng)</span>
+        <div class="amount-input-wrap">
+          <span id="edit-fixed-template-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
+          <input type="text" id="edit-fixed-template-amount" class="amount-input" inputmode="decimal" required />
+        </div>
+      </label>
+      <div class="modal-actions">
+        <button type="button" id="edit-fixed-template-cancel" class="btn btn-ghost btn-block">Hủy</button>
+        <button type="button" id="edit-fixed-template-save" class="btn btn-primary btn-block">Lưu</button>
+      </div>
+    </div>
   </div>
 
   <div id="edit-expense-dialog" class="modal" hidden aria-hidden="true">
