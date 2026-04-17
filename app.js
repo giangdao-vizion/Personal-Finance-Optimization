@@ -5,29 +5,79 @@
   var STORAGE_V2 = "family-budget-v2";
   var MENU_MONTH_SPAN = 60;
 
-  var CATEGORIES = [
-    { id: "an-uong", label: "Ăn uống", icon: "🍜" },
-    { id: "thoi-trang", label: "Thời trang", icon: "👔" },
-    { id: "giai-tri", label: "Giải trí", icon: "🎮" },
-    { id: "con-nhim", label: "Nhím", icon: "🦔" },
-    { id: "con-hy", label: "Hy", icon: "🌸" },
-    { id: "sinh-hoat", label: "Sinh hoạt", icon: "💡" },
-    { id: "di-lai", label: "Đi lại / Giao thông", icon: "🚗" },
-    { id: "suc-khoe", label: "Sức khỏe", icon: "💊" },
-    { id: "nha-cua", label: "Nhà cửa / Tiện ích", icon: "🏠" },
-    { id: "hoc-tap", label: "Học tập / Phát triển", icon: "📚" },
-    { id: "tiet-kiem", label: "Tiết kiệm", icon: "💰" },
-    { id: "dau-tu", label: "Đầu tư", icon: "📈" },
-    { id: "tra-no", label: "Trả nợ", icon: "📉" },
-    { id: "khac", label: "Khác", icon: "📌" },
+  /** Các biểu tượng có sẵn khi tạo / sửa danh mục */
+  var ICON_PRESETS = [
+    { id: "food", sym: "🍜" },
+    { id: "receipt", sym: "🧾" },
+    { id: "shield", sym: "🛡️" },
+    { id: "cart", sym: "🛒" },
+    { id: "car", sym: "🚗" },
+    { id: "home", sym: "🏠" },
+    { id: "pill", sym: "💊" },
+    { id: "bolt", sym: "⚡" },
+    { id: "money", sym: "💰" },
+    { id: "pin", sym: "📌" },
   ];
 
-  var categoryMap = {};
-  var categoryIconMap = {};
-  CATEGORIES.forEach(function (c) {
-    categoryMap[c.id] = c.label;
-    categoryIconMap[c.id] = c.icon;
-  });
+  /** Nhãn cho id danh mục cũ (trước khi có danh mục tùy chỉnh) — dùng khi gộp dữ liệu cũ */
+  var LEGACY_CATEGORY_LABELS = {
+    "an-uong": "Ăn uống",
+    "thoi-trang": "Thời trang",
+    "giai-tri": "Giải trí",
+    "con-nhim": "Nhím",
+    "con-hy": "Hy",
+    "sinh-hoat": "Sinh hoạt",
+    "di-lai": "Đi lại / Giao thông",
+    "suc-khoe": "Sức khỏe",
+    "nha-cua": "Nhà cửa / Tiện ích",
+    "hoc-tap": "Học tập / Phát triển",
+    "tiet-kiem": "Tiết kiệm",
+    "dau-tu": "Đầu tư",
+    "tra-no": "Trả nợ",
+    "khac": "Khác",
+    "con-cai": "Nhím",
+  };
+
+  function defaultCategories() {
+    return [
+      { id: "cat-an-uong", label: "Ăn uống", iconId: "food" },
+      { id: "cat-hoa-don", label: "Hoá đơn", iconId: "receipt" },
+      { id: "cat-bao-hiem", label: "Bảo hiểm", iconId: "shield" },
+      { id: "cat-sieu-thi", label: "Siêu thị", iconId: "cart" },
+      { id: "cat-di-lai", label: "Đi lại", iconId: "car" },
+    ];
+  }
+
+  function catUid() {
+    return "c-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+  }
+
+  function iconIdToSym(iconId) {
+    var i;
+    for (i = 0; i < ICON_PRESETS.length; i++) {
+      if (ICON_PRESETS[i].id === iconId) return ICON_PRESETS[i].sym;
+    }
+    return "📌";
+  }
+
+  function normalizeCategoryRow(c) {
+    var label = c && typeof c.label === "string" ? c.label.trim() : "";
+    if (!label) label = "Danh mục";
+    if (label.length > 40) label = label.slice(0, 40);
+    var rawId = c && typeof c.id === "string" ? c.id.trim() : "";
+    var id = rawId || catUid();
+    var iconId = c && typeof c.iconId === "string" ? c.iconId : "pin";
+    var okIcon = false;
+    var j;
+    for (j = 0; j < ICON_PRESETS.length; j++) {
+      if (ICON_PRESETS[j].id === iconId) {
+        okIcon = true;
+        break;
+      }
+    }
+    if (!okIcon) iconId = "pin";
+    return { id: id, label: label, iconId: iconId };
+  }
 
   var VND_PER_INPUT_UNIT = 1000;
 
@@ -112,14 +162,7 @@
   }
 
   function defaultFixedTemplates() {
-    return [
-      {
-        id: "ft-default-tiet-kiem",
-        category: "tiet-kiem",
-        name: "",
-        amount: 20000000,
-      },
-    ];
+    return [];
   }
 
   function defaultSettings() {
@@ -149,10 +192,17 @@
           fixedTemplates = [];
         }
         var settings = normalizeSettings(d.settings);
+        var categories;
+        if (Array.isArray(d.categories) && d.categories.length > 0) {
+          categories = d.categories;
+        } else {
+          categories = defaultCategories();
+        }
         return {
           months: months,
           fixedTemplates: fixedTemplates,
           settings: settings,
+          categories: categories,
         };
       }
     } catch (e) {}
@@ -175,6 +225,7 @@
               months: months,
               fixedTemplates: defaultFixedTemplates(),
               settings: defaultSettings(),
+              categories: defaultCategories(),
             })
           );
         } catch (e3) {}
@@ -184,6 +235,7 @@
       months: months,
       fixedTemplates: defaultFixedTemplates(),
       settings: defaultSettings(),
+      categories: defaultCategories(),
     };
   }
 
@@ -195,6 +247,7 @@
           months: app.months,
           fixedTemplates: app.fixedTemplates,
           settings: app.settings,
+          categories: app.categories,
         })
       );
     } catch (e) {}
@@ -222,10 +275,95 @@
   }
 
   migrateAllMonthsIncomeUserSet();
+
+  function collectOrphanCategoryIds() {
+    var set = {};
+    function add(id) {
+      if (id && typeof id === "string") set[id] = true;
+    }
+    Object.keys(app.months).forEach(function (k) {
+      var m = app.months[k];
+      if (!m || !Array.isArray(m.expenses)) return;
+      m.expenses.forEach(function (e) {
+        add(e.category);
+      });
+    });
+    (app.fixedTemplates || []).forEach(function (t) {
+      add(t.category);
+    });
+    return Object.keys(set);
+  }
+
+  function mergeOrphanCategoriesIntoList() {
+    collectOrphanCategoryIds().forEach(function (id) {
+      var exists = app.categories.some(function (c) {
+        return c.id === id;
+      });
+      if (exists) return;
+      app.categories.push({
+        id: id,
+        label: LEGACY_CATEGORY_LABELS[id] || id,
+        iconId: "pin",
+      });
+    });
+  }
+
+  function ensureAppCategories() {
+    if (!Array.isArray(app.categories) || app.categories.length === 0) {
+      app.categories = defaultCategories();
+    } else {
+      app.categories = app.categories.map(normalizeCategoryRow);
+    }
+    mergeOrphanCategoriesIntoList();
+  }
+
+  ensureAppCategories();
+
+  function findCategory(id) {
+    var i;
+    for (i = 0; i < app.categories.length; i++) {
+      if (app.categories[i].id === id) return app.categories[i];
+    }
+    return null;
+  }
+
+  function categoryIdExists(id) {
+    return !!findCategory(id);
+  }
+
+  function getCategoryLabel(id) {
+    var c = findCategory(id);
+    if (c) return c.label;
+    return LEGACY_CATEGORY_LABELS[id] || id;
+  }
+
+  function getCategoryIconSym(id) {
+    var c = findCategory(id);
+    return iconIdToSym(c ? c.iconId : "pin");
+  }
+
+  function getFirstCategoryId() {
+    return app.categories[0] ? app.categories[0].id : "cat-an-uong";
+  }
+
+  function reassignCategoryEverywhere(fromId, toId) {
+    Object.keys(app.months).forEach(function (k) {
+      var m = app.months[k];
+      if (!m || !Array.isArray(m.expenses)) return;
+      m.expenses.forEach(function (e) {
+        if (e.category === fromId) e.category = toId;
+      });
+    });
+    (app.fixedTemplates || []).forEach(function (t) {
+      if (t.category === fromId) t.category = toId;
+    });
+  }
+
   var activeMonthKey = null;
   var state = null;
   var editingExpenseId = null;
   var editingFixedTemplateId = null;
+  var editingCategoryId = null;
   var incomeProgrammatic = false;
   var incomeDirty = false;
 
@@ -385,6 +523,18 @@
   var elSettingsAddFixedName = document.getElementById("settings-add-fixed-name");
   var elSettingsAddFixedAmount = document.getElementById("settings-add-fixed-amount");
   var elSettingsAddFixedAmountPreview = document.getElementById("settings-add-fixed-amount-preview");
+  var elSettingsCategoriesList = document.getElementById("settings-categories-list");
+  var elSettingsAddCategoryForm = document.getElementById("settings-add-category-form");
+  var elSettingsNewCategoryLabel = document.getElementById("settings-new-category-label");
+  var elSettingsNewCategoryIcons = document.getElementById("settings-new-category-icons");
+  var elSettingsNewCategoryIconId = document.getElementById("settings-new-category-icon-id");
+  var elEditCategoryDialog = document.getElementById("edit-category-dialog");
+  var elEditCategoryBackdrop = document.getElementById("edit-category-backdrop");
+  var elEditCategoryLabelInput = document.getElementById("edit-category-label-input");
+  var elEditCategoryIcons = document.getElementById("edit-category-icons");
+  var elEditCategoryIconId = document.getElementById("edit-category-icon-id");
+  var elEditCategorySave = document.getElementById("edit-category-save");
+  var elEditCategoryCancel = document.getElementById("edit-category-cancel");
 
   var elEditFixedDialog = document.getElementById("edit-fixed-template-dialog");
   var elEditFixedBackdrop = document.getElementById("edit-fixed-template-backdrop");
@@ -410,12 +560,191 @@
   function fillCategorySelect(el) {
     if (!el) return;
     el.innerHTML = "";
-    CATEGORIES.forEach(function (c) {
+    app.categories.forEach(function (c) {
       var opt = document.createElement("option");
       opt.value = c.id;
-      opt.textContent = c.icon + "  " + c.label;
+      opt.textContent = iconIdToSym(c.iconId) + "  " + c.label;
       el.appendChild(opt);
     });
+  }
+
+  function refreshAllCategorySelects() {
+    fillCategorySelect(elCategory);
+    fillCategorySelect(elSettingsAddFixedCategory);
+    fillCategorySelect(elEditFixedCategory);
+  }
+
+  function renderIconPicker(containerEl, hiddenEl, selectedId) {
+    if (!containerEl || !hiddenEl) return;
+    var sel = selectedId;
+    var valid = false;
+    var i;
+    for (i = 0; i < ICON_PRESETS.length; i++) {
+      if (ICON_PRESETS[i].id === sel) {
+        valid = true;
+        break;
+      }
+    }
+    if (!valid) sel = "pin";
+    hiddenEl.value = sel;
+    containerEl.innerHTML = "";
+    ICON_PRESETS.forEach(function (p) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "icon-picker-btn" + (p.id === sel ? " is-selected" : "");
+      btn.textContent = p.sym;
+      btn.setAttribute("aria-pressed", p.id === sel ? "true" : "false");
+      btn.addEventListener("click", function () {
+        hiddenEl.value = p.id;
+        var ch = containerEl.querySelectorAll(".icon-picker-btn");
+        var j;
+        for (j = 0; j < ch.length; j++) {
+          var on = ch[j] === btn;
+          ch[j].classList.toggle("is-selected", on);
+          ch[j].setAttribute("aria-pressed", on ? "true" : "false");
+        }
+      });
+      containerEl.appendChild(btn);
+    });
+  }
+
+  function renderSettingsNewCategoryIconPicker() {
+    var start = elSettingsNewCategoryIconId && elSettingsNewCategoryIconId.value;
+    renderIconPicker(elSettingsNewCategoryIcons, elSettingsNewCategoryIconId, start || "food");
+  }
+
+  function renderSettingsCategoriesList() {
+    if (!elSettingsCategoriesList) return;
+    elSettingsCategoriesList.innerHTML = "";
+    app.categories.forEach(function (c) {
+      var li = document.createElement("li");
+      li.className = "settings-category-row";
+
+      var sym = document.createElement("span");
+      sym.className = "settings-category-sym";
+      sym.textContent = iconIdToSym(c.iconId);
+      sym.setAttribute("aria-hidden", "true");
+
+      var mid = document.createElement("div");
+      mid.className = "settings-category-mid";
+      var title = document.createElement("span");
+      title.className = "settings-category-title";
+      title.textContent = c.label;
+      mid.appendChild(title);
+
+      var actions = document.createElement("div");
+      actions.className = "settings-category-actions";
+
+      var btnEdit = document.createElement("button");
+      btnEdit.type = "button";
+      btnEdit.className = "btn-icon btn-icon-muted";
+      btnEdit.setAttribute("aria-label", "Sửa danh mục");
+      btnEdit.appendChild(iconPencilSvg());
+      btnEdit.addEventListener("click", function () {
+        openEditCategoryDialog(c.id);
+      });
+
+      var btnDel = document.createElement("button");
+      btnDel.type = "button";
+      btnDel.className = "btn-icon btn-icon-danger";
+      btnDel.setAttribute("aria-label", "Xóa danh mục");
+      btnDel.appendChild(iconTrashSvg());
+      btnDel.addEventListener("click", function () {
+        deleteCategoryFromSettings(c.id);
+      });
+
+      actions.appendChild(btnEdit);
+      actions.appendChild(btnDel);
+      li.appendChild(sym);
+      li.appendChild(mid);
+      li.appendChild(actions);
+      elSettingsCategoriesList.appendChild(li);
+    });
+  }
+
+  function deleteCategoryFromSettings(id) {
+    if (app.categories.length <= 1) {
+      window.alert("Cần giữ ít nhất một danh mục.");
+      return;
+    }
+    if (!confirm("Xóa danh mục này? Mọi khoản chi và khoản cố định đang dùng danh mục này sẽ chuyển sang danh mục khác.")) {
+      return;
+    }
+    var rest = app.categories.filter(function (c) {
+      return c.id !== id;
+    });
+    var toId = rest[0] ? rest[0].id : getFirstCategoryId();
+    reassignCategoryEverywhere(id, toId);
+    app.categories = rest;
+    saveAppData();
+    refreshAllCategorySelects();
+    renderSettingsCategoriesList();
+    if (activeMonthKey && state) {
+      state.expenses = state.expenses.map(normalizeExpenseRow);
+      syncFixedIntoMonth(state);
+      persistAndRender();
+    } else {
+      renderFixedTemplatesList();
+    }
+  }
+
+  function closeEditCategoryDialog() {
+    editingCategoryId = null;
+    if (elEditCategoryDialog) {
+      elEditCategoryDialog.hidden = true;
+      elEditCategoryDialog.setAttribute("aria-hidden", "true");
+    }
+    if (
+      (!elEditDialog || elEditDialog.hidden) &&
+      (!elEditFixedDialog || elEditFixedDialog.hidden)
+    ) {
+      document.body.classList.remove("modal-open");
+    }
+  }
+
+  function openEditCategoryDialog(catId) {
+    var c = findCategory(catId);
+    if (!c || !elEditCategoryDialog) return;
+    editingCategoryId = catId;
+    if (elEditCategoryLabelInput) elEditCategoryLabelInput.value = c.label;
+    renderIconPicker(elEditCategoryIcons, elEditCategoryIconId, c.iconId);
+    elEditCategoryDialog.hidden = false;
+    elEditCategoryDialog.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    setTimeout(function () {
+      if (elEditCategoryLabelInput) elEditCategoryLabelInput.focus();
+    }, 0);
+  }
+
+  function saveEditCategoryDialog() {
+    if (!editingCategoryId) return;
+    var c = findCategory(editingCategoryId);
+    if (!c) {
+      closeEditCategoryDialog();
+      return;
+    }
+    var label = elEditCategoryLabelInput ? elEditCategoryLabelInput.value.trim() : "";
+    if (!label) {
+      if (elEditCategoryLabelInput) elEditCategoryLabelInput.focus();
+      return;
+    }
+    if (label.length > 40) label = label.slice(0, 40);
+    c.label = label;
+    c.iconId = elEditCategoryIconId ? elEditCategoryIconId.value : "pin";
+    var ok = false;
+    var i;
+    for (i = 0; i < ICON_PRESETS.length; i++) {
+      if (ICON_PRESETS[i].id === c.iconId) {
+        ok = true;
+        break;
+      }
+    }
+    if (!ok) c.iconId = "pin";
+    saveAppData();
+    closeEditCategoryDialog();
+    renderSettingsCategoriesList();
+    refreshAllCategorySelects();
+    if (activeMonthKey && state) persistAndRender();
   }
 
   function formatPreviewPlainVND(vnd) {
@@ -450,9 +779,10 @@
   function normalizeExpenseRow(row) {
     var cat = row.category;
     if (cat === "con-cai") cat = "con-nhim";
+    if (!categoryIdExists(cat)) cat = getFirstCategoryId();
     var o = {
       id: row.id || uid(),
-      category: cat && categoryMap[cat] ? cat : "khac",
+      category: cat,
       name: typeof row.name === "string" ? row.name.trim() : "",
       amount: typeof row.amount === "number" && row.amount >= 0 ? Math.round(row.amount) : 0,
     };
@@ -463,7 +793,7 @@
   function syncFixedIntoMonth(m) {
     if (!Array.isArray(app.fixedTemplates)) return;
     app.fixedTemplates.forEach(function (t) {
-      if (!t || !t.id || !categoryMap[t.category]) return;
+      if (!t || !t.id || !categoryIdExists(t.category)) return;
       var exists = m.expenses.some(function (e) {
         return e.templateId === t.id;
       });
@@ -518,7 +848,7 @@
 
   function totalsByCategory() {
     var map = {};
-    CATEGORIES.forEach(function (c) {
+    app.categories.forEach(function (c) {
       map[c.id] = 0;
     });
     if (!state) return map;
@@ -581,7 +911,7 @@
     if (!elPieBody || !elPieSlices || !elPieLegend || !state) return;
     var byCat = totalsByCategory();
     var segments = [];
-    CATEGORIES.forEach(function (c) {
+    app.categories.forEach(function (c) {
       var amt = byCat[c.id] || 0;
       if (amt > 0) segments.push({ id: c.id, label: c.label, amount: amt });
     });
@@ -684,14 +1014,14 @@
     elBreakdown.innerHTML = "";
     if (!state) return;
     var byCat = totalsByCategory();
-    CATEGORIES.forEach(function (c) {
+    app.categories.forEach(function (c) {
       var amt = byCat[c.id] || 0;
       if (amt === 0) return;
       var li = document.createElement("li");
       li.className = "breakdown-item";
       var icon = document.createElement("span");
       icon.className = "breakdown-icon";
-      icon.textContent = c.icon;
+      icon.textContent = iconIdToSym(c.iconId);
       icon.setAttribute("aria-hidden", "true");
       var mid = document.createElement("span");
       mid.className = "breakdown-mid";
@@ -767,7 +1097,7 @@
       mid.className = "fixed-template-row-mid";
       var title = document.createElement("span");
       title.className = "fixed-template-row-title";
-      var catLabel = categoryMap[t.category] || t.category;
+      var catLabel = getCategoryLabel(t.category);
       title.textContent = t.name ? t.name + " · " + catLabel : catLabel;
       var sub = document.createElement("span");
       sub.className = "fixed-template-row-amt";
@@ -832,8 +1162,8 @@
 
       var ico = document.createElement("span");
       ico.className = "expense-cat-ico";
-      ico.textContent = categoryIconMap[e.category] || "📌";
-      ico.title = categoryMap[e.category] || e.category;
+      ico.textContent = getCategoryIconSym(e.category);
+      ico.title = getCategoryLabel(e.category);
 
       var mid = document.createElement("div");
       mid.className = "expense-row-mid";
@@ -848,11 +1178,9 @@
       }
       var line = document.createElement("span");
       line.className = "expense-row-line";
-      var namePart = e.name
-        ? e.name
-        : categoryMap[e.category] || e.category;
+      var namePart = e.name ? e.name : getCategoryLabel(e.category);
       line.textContent = namePart;
-      line.title = categoryMap[e.category] + (e.name ? " · " + e.name : "");
+      line.title = getCategoryLabel(e.category) + (e.name ? " · " + e.name : "");
       wrap.appendChild(line);
       mid.appendChild(wrap);
 
@@ -902,6 +1230,9 @@
     renderFixedTemplatesList();
     if (elSideMenu && !elSideMenu.hidden) {
       renderSideMenuList();
+    }
+    if (elViewSettings && !elViewSettings.hidden) {
+      renderSettingsCategoriesList();
     }
   }
 
@@ -1097,11 +1428,14 @@
     closeSideMenu(true);
     closeEditExpenseDialog();
     closeEditFixedTemplateDialog();
+    closeEditCategoryDialog();
     if (elSettingsDefaultLimit) {
       elSettingsDefaultLimit.value = formatAsNganDisplay(getDefaultMonthlyLimit());
       updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
     }
     renderFixedTemplatesList();
+    renderSettingsCategoriesList();
+    renderSettingsNewCategoryIconPicker();
     showSettingsView();
     setTimeout(function () {
       if (elBtnCloseSettings) elBtnCloseSettings.focus();
@@ -1178,6 +1512,7 @@
     cancelLimitEdit();
     closeEditFixedTemplateDialog();
     closeEditExpenseDialog();
+    closeEditCategoryDialog();
     var key = readThangFromUrl();
     if (!key) {
       key = currentMonthKey();
@@ -1259,6 +1594,40 @@
     });
   }
 
+  if (elSettingsAddCategoryForm) {
+    elSettingsAddCategoryForm.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var lab = elSettingsNewCategoryLabel ? elSettingsNewCategoryLabel.value.trim() : "";
+      if (!lab) {
+        if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.focus();
+        return;
+      }
+      if (lab.length > 40) lab = lab.slice(0, 40);
+      var iconId = elSettingsNewCategoryIconId ? elSettingsNewCategoryIconId.value : "pin";
+      app.categories.push(
+        normalizeCategoryRow({ id: catUid(), label: lab, iconId: iconId })
+      );
+      saveAppData();
+      if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.value = "";
+      renderSettingsCategoriesList();
+      renderSettingsNewCategoryIconPicker();
+      refreshAllCategorySelects();
+      if (activeMonthKey && state) persistAndRender();
+    });
+  }
+
+  if (elEditCategorySave) elEditCategorySave.addEventListener("click", saveEditCategoryDialog);
+  if (elEditCategoryCancel) elEditCategoryCancel.addEventListener("click", closeEditCategoryDialog);
+  if (elEditCategoryBackdrop) elEditCategoryBackdrop.addEventListener("click", closeEditCategoryDialog);
+  if (elEditCategoryLabelInput) {
+    elEditCategoryLabelInput.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveEditCategoryDialog();
+      }
+    });
+  }
+
   elSettingsAddFixedForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
     var amount = parseMoneyToVND(elSettingsAddFixedAmount.value);
@@ -1267,7 +1636,7 @@
       return;
     }
     var cat = elSettingsAddFixedCategory.value;
-    if (!categoryMap[cat]) return;
+    if (!categoryIdExists(cat)) return;
     app.fixedTemplates.push({
       id: "ft-" + uid(),
       category: cat,
@@ -1297,12 +1666,13 @@
     if (!state || !elEditDialog) return;
     cancelLimitEdit();
     closeEditFixedTemplateDialog();
+    closeEditCategoryDialog();
     var e = state.expenses.find(function (x) {
       return x.id === expenseId;
     });
     if (!e) return;
     editingExpenseId = expenseId;
-    var cat = categoryMap[e.category] || e.category;
+    var cat = getCategoryLabel(e.category);
     var line = e.name ? e.name + " · " + cat : cat;
     elEditDesc.textContent = line;
     elEditAmount.value = formatAsNganDisplay(e.amount);
@@ -1331,7 +1701,7 @@
       elEditDialog.hidden = true;
       elEditDialog.setAttribute("aria-hidden", "true");
     }
-    if (!elEditFixedDialog || elEditFixedDialog.hidden) {
+    if ((!elEditFixedDialog || elEditFixedDialog.hidden) && (!elEditCategoryDialog || elEditCategoryDialog.hidden)) {
       document.body.classList.remove("modal-open");
     }
   }
@@ -1342,12 +1712,13 @@
       elEditFixedDialog.hidden = true;
       elEditFixedDialog.setAttribute("aria-hidden", "true");
     }
-    if (!elEditDialog || elEditDialog.hidden) {
+    if ((!elEditDialog || elEditDialog.hidden) && (!elEditCategoryDialog || elEditCategoryDialog.hidden)) {
       document.body.classList.remove("modal-open");
     }
   }
 
   function openEditFixedTemplateDialog(templateId) {
+    closeEditCategoryDialog();
     var t = findFixedTemplate(templateId);
     if (!t || !elEditFixedDialog) return;
     editingFixedTemplateId = templateId;
@@ -1373,7 +1744,7 @@
       return;
     }
     var cat = elEditFixedCategory.value;
-    if (!categoryMap[cat]) return;
+    if (!categoryIdExists(cat)) return;
     var amount = parseMoneyToVND(elEditFixedAmount.value);
     if (amount <= 0) {
       elEditFixedAmount.focus();
@@ -1417,6 +1788,11 @@
       if (isLimitEditOpen()) {
         ev.preventDefault();
         cancelLimitEdit();
+        return;
+      }
+      if (elEditCategoryDialog && !elEditCategoryDialog.hidden) {
+        ev.preventDefault();
+        closeEditCategoryDialog();
         return;
       }
       if (elEditFixedDialog && !elEditFixedDialog.hidden) {

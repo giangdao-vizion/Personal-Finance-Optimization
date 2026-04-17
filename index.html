@@ -36,9 +36,9 @@
     <symbol id="icon-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
     </symbol>
-    <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+    <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3L15.5 5.94L19.79 7.5L19 12L19.79 16.5L15.5 18.06L12 21L8.5 18.06L4.21 16.5L5 12L4.21 7.5L8.5 5.94L12 3z" />
+      <circle cx="12" cy="12" r="3.25" />
     </symbol>
   </svg>
 
@@ -52,7 +52,7 @@
         <h1 id="month-screen-title" class="month-topbar-title">Tháng</h1>
       </div>
       <button type="button" id="btn-open-settings" class="btn-icon" aria-label="Mở cài đặt">
-        <svg class="icon-svg" width="22" height="22"><use href="#icon-settings" /></svg>
+        <svg class="icon-svg icon-svg-settings" width="22" height="22" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><use href="#icon-settings" /></svg>
       </button>
     </header>
 
@@ -232,6 +232,31 @@
       </label>
     </section>
 
+    <section class="card" aria-labelledby="settings-categories-heading">
+      <h2 id="settings-categories-heading" class="card-title">Danh mục chi tiêu</h2>
+      <p class="field-hint settings-hint">Mặc định có sẵn vài danh mục; bạn có thể đổi tên, xóa hoặc thêm mới. Phải giữ ít nhất một danh mục. Khi xóa, mọi khoản chi và khoản cố định đang dùng danh mục đó sẽ chuyển sang danh mục còn lại đầu tiên trong danh sách.</p>
+      <ul id="settings-categories-list" class="settings-categories-list"></ul>
+      <form id="settings-add-category-form" class="settings-add-category-form">
+        <label class="field">
+          <span class="field-label">Tên danh mục mới</span>
+          <input
+            type="text"
+            id="settings-new-category-label"
+            maxlength="40"
+            required
+            placeholder="Ví dụ: Giải trí"
+            autocomplete="off"
+          />
+        </label>
+        <div class="field">
+          <span class="field-label">Biểu tượng</span>
+          <div id="settings-new-category-icons" class="icon-picker" role="group" aria-label="Chọn biểu tượng"></div>
+          <input type="hidden" id="settings-new-category-icon-id" value="food" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Thêm danh mục</button>
+      </form>
+    </section>
+
     <section class="card" aria-labelledby="settings-fixed-heading">
       <h2 id="settings-fixed-heading" class="card-title">Khoản chi cố định</h2>
       <p class="field-hint settings-hint">Danh sách chung với khoản bạn đánh dấu &quot;Cố định hàng tháng&quot; khi thêm chi. Sửa ở đây sẽ cập nhật mọi tháng đang có dòng gắn với mẫu này.</p>
@@ -287,6 +312,31 @@
         </div>
       </div>
     </aside>
+  </div>
+
+  <div id="edit-category-dialog" class="modal" hidden aria-hidden="true">
+    <div class="modal-backdrop" id="edit-category-backdrop" tabindex="-1"></div>
+    <div
+      class="modal-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-category-title"
+    >
+      <h2 id="edit-category-title" class="modal-title">Sửa danh mục</h2>
+      <label class="field">
+        <span class="field-label">Tên</span>
+        <input type="text" id="edit-category-label-input" maxlength="40" autocomplete="off" />
+      </label>
+      <div class="field">
+        <span class="field-label">Biểu tượng</span>
+        <div id="edit-category-icons" class="icon-picker" role="group" aria-label="Chọn biểu tượng"></div>
+        <input type="hidden" id="edit-category-icon-id" value="food" />
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="edit-category-cancel" class="btn btn-ghost btn-block">Hủy</button>
+        <button type="button" id="edit-category-save" class="btn btn-primary btn-block">Lưu</button>
+      </div>
+    </div>
   </div>
 
   <div id="edit-fixed-template-dialog" class="modal" hidden aria-hidden="true">

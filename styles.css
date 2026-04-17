@@ -73,6 +73,14 @@ body {
   flex-shrink: 0;
 }
 
+.icon-svg-settings {
+  aspect-ratio: 1;
+  width: 22px;
+  height: 22px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
 .icon-svg-muted {
   opacity: 0.55;
   color: var(--muted);
@@ -513,6 +521,88 @@ body.settings-open {
 
 .settings-hint {
   margin: -0.35rem 0 0.85rem;
+}
+
+.settings-categories-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.settings-category-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.settings-category-sym {
+  font-size: 1.35rem;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 2rem;
+  text-align: center;
+}
+
+.settings-category-mid {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-category-title {
+  font-weight: 500;
+  font-size: 0.9375rem;
+}
+
+.settings-category-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.settings-add-category-form {
+  margin-top: 0.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.icon-picker-btn {
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-picker-btn:hover {
+  background: var(--surface-press);
+}
+
+.icon-picker-btn.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .settings-add-fixed-form {
