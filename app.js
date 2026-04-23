@@ -171,6 +171,20 @@
     return sign + formatShortDecimal(n / 1e9) + "tỷ \u20ab";
   }
 
+  function formatMoneyCompact(n) {
+    if (typeof n !== "number" || isNaN(n)) n = 0;
+    var sign = "";
+    if (n < 0) {
+      sign = "-";
+      n = Math.abs(n);
+    }
+    n = Math.round(n);
+    if (n < 1000) return sign + n;
+    if (n < 1e6) return sign + formatShortDecimal(n / 1000) + "k";
+    if (n < 1e9) return sign + formatShortDecimal(n / 1e6) + "tr";
+    return sign + formatShortDecimal(n / 1e9) + "tỷ";
+  }
+
   function uid() {
     return "e-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
   }
@@ -1820,11 +1834,11 @@
       if (has) {
         t2.textContent =
           "Hạn mức " +
-          formatMoneyVND(inc) +
+          formatMoneyCompact(inc) +
           " · Chi " +
-          formatMoneyVND(spent) +
+          formatMoneyCompact(spent) +
           " · Còn " +
-          formatMoneyVND(bal);
+          formatMoneyCompact(bal);
       } else {
         t2.textContent = "Chưa có dữ liệu";
       }
