@@ -221,13 +221,13 @@
       </summary>
       <div class="collapsible-panel">
         <div class="report-mode-bar" role="tablist" aria-label="Chế độ báo cáo phân bổ">
-          <button type="button" id="report-mode-breakdown" class="expense-filter-btn is-active" aria-pressed="true">Theo danh mục</button>
-          <button type="button" id="report-mode-pie" class="expense-filter-btn" aria-pressed="false">Biểu đồ tròn</button>
+          <button type="button" id="report-mode-breakdown" class="expense-filter-btn" aria-pressed="false">Bảng</button>
+          <button type="button" id="report-mode-pie" class="expense-filter-btn is-active" aria-pressed="true">Biểu đồ</button>
         </div>
-        <div id="report-breakdown-view" class="report-view">
+        <div id="report-breakdown-view" class="report-view" hidden>
           <ul id="category-breakdown" class="breakdown-list"></ul>
         </div>
-        <div id="report-pie-view" class="report-view" hidden>
+        <div id="report-pie-view" class="report-view">
           <div class="pie-chart-wrap" id="pie-chart-wrap">
             <p id="pie-chart-empty" class="pie-chart-empty">Chưa có khoản chi — biểu đồ sẽ hiện khi bạn thêm dữ liệu.</p>
             <div id="pie-chart-body" class="pie-chart-body" hidden>

@@ -710,7 +710,7 @@
   var elEditTemplateNote = document.getElementById("edit-expense-template-note");
   var elEditSave = document.getElementById("edit-expense-save");
   var elEditCancel = document.getElementById("edit-expense-cancel");
-  var reportMode = "breakdown";
+  var reportMode = "pie";
 
   function fillCategorySelect(el) {
     if (!el) return;
