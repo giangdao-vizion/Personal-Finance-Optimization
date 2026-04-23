@@ -1352,6 +1352,37 @@ select:focus-visible {
   margin: 0 0 0.55rem;
 }
 
+.expense-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.expense-page-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.expense-page-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.expense-page-info {
+  min-width: 2.8rem;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .report-mode-bar {
   display: flex;
   align-items: center;

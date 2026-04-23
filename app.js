@@ -543,6 +543,8 @@
   var editingFixedTemplateId = null;
   var editingCategoryId = null;
   var expenseListFilter = "all";
+  var expensePage = 1;
+  var EXPENSE_PAGE_SIZE = 10;
   var incomeProgrammatic = false;
   var incomeDirty = false;
 
@@ -673,6 +675,9 @@
   var elExpenseFilterAll = document.getElementById("expense-filter-all");
   var elExpenseFilterFixed = document.getElementById("expense-filter-fixed");
   var elExpenseFilterFlex = document.getElementById("expense-filter-flex");
+  var elExpensePagePrev = document.getElementById("expense-page-prev");
+  var elExpensePageInfo = document.getElementById("expense-page-info");
+  var elExpensePageNext = document.getElementById("expense-page-next");
   var elReportModeBreakdown = document.getElementById("report-mode-breakdown");
   var elReportModePie = document.getElementById("report-mode-pie");
   var elReportBreakdownView = document.getElementById("report-breakdown-view");
@@ -1452,7 +1457,13 @@
     elExpenseList.innerHTML = "";
     if (!state) return;
     var rows = getVisibleExpenses();
-    var hasRows = rows.length > 0;
+    var totalRecords = rows.length;
+    var totalPages = Math.max(1, Math.ceil(totalRecords / EXPENSE_PAGE_SIZE));
+    if (expensePage > totalPages) expensePage = totalPages;
+    if (expensePage < 1) expensePage = 1;
+    var startIdx = (expensePage - 1) * EXPENSE_PAGE_SIZE;
+    var pageRows = rows.slice(startIdx, startIdx + EXPENSE_PAGE_SIZE);
+    var hasRows = totalRecords > 0;
     elEmpty.hidden = hasRows;
     if (!hasRows) {
       elEmpty.textContent =
@@ -1461,8 +1472,9 @@
           : "Không có khoản chi phù hợp bộ lọc.";
     }
     renderExpenseFilterButtons();
+    renderExpensePagination(totalRecords, totalPages);
 
-    rows.forEach(function (e) {
+    pageRows.forEach(function (e) {
       var li = document.createElement("li");
       li.className = "expense-row";
       li.dataset.id = e.id;
@@ -1532,9 +1544,19 @@
     var totalLi = document.createElement("li");
     totalLi.className = "expense-total-row";
     totalLi.innerHTML =
-      '<span class="expense-total-label">Tổng chi</span><span class="expense-total-amount"></span>';
+      '<span class="expense-total-label"></span><span class="expense-total-amount"></span>';
+    totalLi.querySelector(".expense-total-label").textContent =
+      "Tổng chi (" + totalRecords + " khoản)";
     totalLi.querySelector(".expense-total-amount").textContent = formatMoneyVND(total);
     elExpenseList.appendChild(totalLi);
+  }
+
+  function renderExpensePagination(totalRecords, totalPages) {
+    if (elExpensePageInfo) {
+      elExpensePageInfo.textContent = expensePage + "/" + totalPages;
+    }
+    if (elExpensePagePrev) elExpensePagePrev.disabled = expensePage <= 1;
+    if (elExpensePageNext) elExpensePageNext.disabled = expensePage >= totalPages;
   }
 
   function isFixedExpenseRow(e) {
@@ -1588,6 +1610,7 @@
   function setExpenseFilter(next) {
     if (next !== "all" && next !== "fixed" && next !== "flex") return;
     expenseListFilter = next;
+    expensePage = 1;
     renderExpenseList();
   }
 
@@ -1864,6 +1887,7 @@
     flushIncomeFromField();
     ensureMonth(key);
     state = app.months[key];
+    expensePage = 1;
     state.expenses = state.expenses.map(normalizeExpenseRow);
     if (!state.incomeUserSet) {
       state.income = getDefaultMonthlyLimit();
@@ -1965,6 +1989,7 @@
     };
     if (templateId) row.templateId = templateId;
     state.expenses.push(row);
+    expensePage = 1;
     elName.value = "";
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
@@ -2001,6 +2026,19 @@
   if (elExpenseFilterFlex) {
     elExpenseFilterFlex.addEventListener("click", function () {
       setExpenseFilter("flex");
+    });
+  }
+  if (elExpensePagePrev) {
+    elExpensePagePrev.addEventListener("click", function () {
+      if (expensePage <= 1) return;
+      expensePage -= 1;
+      renderExpenseList();
+    });
+  }
+  if (elExpensePageNext) {
+    elExpensePageNext.addEventListener("click", function () {
+      expensePage += 1;
+      renderExpenseList();
     });
   }
   if (elReportModeBreakdown) {
