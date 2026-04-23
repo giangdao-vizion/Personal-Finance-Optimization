@@ -101,105 +101,148 @@
           <dd id="sum-expenses" class="summary-dd summary-value">0 ₫</dd>
         </div>
         <div class="summary-row summary-row-balance">
-          <dt>Còn lại</dt>
+          <dt class="summary-balance-head">
+            <span class="summary-balance-head-label">Còn lại</span>
+            <details class="summary-forecast-info">
+              <summary aria-label="Xem dự đoán phân bổ số tiền còn lại">
+                <span class="inline-info-icon" aria-hidden="true">i</span>
+              </summary>
+              <div class="summary-forecast-panel">
+                <p class="summary-forecast-title">Dự kiến cho tháng</p>
+                <p id="month-forecast-note" class="summary-forecast-note"></p>
+                <table class="summary-forecast-table" aria-label="Bảng dự kiến cho tháng">
+                  <tbody>
+                    <tr>
+                      <th scope="row">Trung bình/ngày</th>
+                      <td id="month-forecast-day">0 ₫</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Trung bình/tuần</th>
+                      <td id="month-forecast-week">0 ₫</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p class="summary-forecast-title">Dự kiến chi tiêu còn lại</p>
+                <p id="balance-forecast-note" class="summary-forecast-note"></p>
+                <table class="summary-forecast-table" aria-label="Bảng dự đoán phân bổ">
+                  <tbody>
+                    <tr>
+                      <th scope="row">Theo ngày</th>
+                      <td id="balance-forecast-day">0 ₫</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Theo tuần</th>
+                      <td id="balance-forecast-week">0 ₫</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </dt>
           <dd id="sum-balance" class="summary-dd summary-value summary-balance-dd">0 ₫</dd>
         </div>
       </dl>
     </section>
 
-    <section class="card add-card" aria-labelledby="add-heading">
-      <h2 id="add-heading" class="card-title">Thêm khoản chi</h2>
+    <details class="card add-card collapsible-card" aria-labelledby="add-heading" open>
+      <summary class="collapsible-summary">
+        <h2 id="add-heading" class="card-title collapsible-summary-title">Thêm khoản chi</h2>
+        <span class="collapsible-chevron" aria-hidden="true">
+          <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
+        </span>
+      </summary>
+      <div class="collapsible-panel">
       <form id="expense-form" class="expense-form">
-        <label class="field">
-          <span class="field-label">Danh mục</span>
-          <div class="select-wrap">
-            <select id="expense-category" required></select>
-          </div>
-        </label>
-        <label class="field">
-          <span class="field-label">Tên khoản <span class="optional">(không bắt buộc)</span></span>
-          <input type="text" id="expense-name" maxlength="120" enterkeyhint="next" placeholder="Có thể để trống" />
-        </label>
-        <label class="field">
-          <span class="field-label">Số tiền (nghìn đồng)</span>
-          <div class="amount-input-wrap">
-            <span id="expense-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
-            <input
-              type="text"
-              id="expense-amount"
-              class="amount-input"
-              inputmode="decimal"
-              required
-              enterkeyhint="done"
-              placeholder="Ví dụ: 1500 (= 1,5 triệu)"
-            />
-          </div>
-        </label>
-        <div class="field field-checkbox-expense">
-          <label class="checkbox-row">
-            <input type="checkbox" id="expense-fixed" />
-            <span class="checkbox-label-text">Cố định hàng tháng</span>
+        <div class="expense-form-top-row">
+          <label class="field expense-form-name-field">
+            <span class="field-label">Tên khoản <span class="optional">(không bắt buộc)</span></span>
+            <input type="text" id="expense-name" maxlength="120" enterkeyhint="next" placeholder="Có thể để trống" />
           </label>
-          <details class="inline-info-hint">
-            <summary aria-label="Xem thông tin về khoản cố định">
-              <span class="inline-info-icon" aria-hidden="true">i</span>
-            </summary>
-            <p class="field-hint">Tháng mới sẽ tự có khoản này. Sửa số tiền trong danh sách chi để cập nhật mặc định cho các tháng sau.</p>
-          </details>
+          <label class="field expense-form-category-field">
+            <span class="field-label">Danh mục</span>
+            <div class="select-wrap">
+              <select id="expense-category" required></select>
+            </div>
+          </label>
         </div>
-        <button type="submit" class="btn btn-primary btn-block">Thêm vào danh sách</button>
+        <div class="expense-amount-fixed-row">
+          <label class="field expense-amount-field">
+            <span class="field-label">Số tiền (nghìn đồng)</span>
+            <div class="amount-input-wrap">
+              <span id="expense-amount-preview" class="amount-preview amount-preview-strong" hidden aria-hidden="true"></span>
+              <input
+                type="text"
+                id="expense-amount"
+                class="amount-input"
+                inputmode="decimal"
+                required
+                enterkeyhint="done"
+                placeholder="Ví dụ: 1500 (= 1,5 triệu)"
+              />
+            </div>
+          </label>
+          <div class="field field-checkbox-expense field-checkbox-inline">
+            <label class="checkbox-row">
+              <input type="checkbox" id="expense-fixed" />
+              <span class="checkbox-label-text">Cố định</span>
+            </label>
+            <details class="inline-info-hint">
+              <summary aria-label="Xem thông tin về khoản cố định">
+                <span class="inline-info-icon" aria-hidden="true">i</span>
+              </summary>
+              <p class="field-hint">Tháng mới sẽ tự có khoản này. Sửa số tiền trong danh sách chi để cập nhật mặc định cho các tháng sau.</p>
+            </details>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Lưu khoản chi</button>
       </form>
-      <div class="fixed-saved-wrap" aria-labelledby="fixed-saved-heading">
-        <p id="fixed-saved-heading" class="fixed-saved-title">Khoản đang ghi cố định</p>
-        <ul id="fixed-templates-list" class="fixed-templates-list"></ul>
       </div>
-    </section>
+    </details>
 
     <section class="card list-card" aria-labelledby="table-heading">
       <div class="table-head">
         <h2 id="table-heading" class="card-title">Danh sách chi tiêu</h2>
-        <button type="button" id="btn-clear-all" class="btn-icon btn-icon-ghost" aria-label="Xóa hết chi tiêu tháng này" title="Xóa hết">
-          <svg class="icon-svg" width="20" height="20"><use href="#icon-trash" /></svg>
-        </button>
+      </div>
+      <div class="expense-filter-bar" role="tablist" aria-label="Lọc khoản chi">
+        <button type="button" id="expense-filter-all" class="expense-filter-btn is-active" aria-pressed="true">All</button>
+        <button type="button" id="expense-filter-fixed" class="expense-filter-btn" aria-pressed="false">Cố định</button>
+        <button type="button" id="expense-filter-flex" class="expense-filter-btn" aria-pressed="false">Linh hoạt</button>
       </div>
       <ul id="expense-list" class="expense-list"></ul>
       <p id="empty-state" class="empty-state" hidden>Chưa có khoản chi. Thêm ở trên.</p>
     </section>
 
-    <details class="card breakdown-card collapsible-card">
+    <details class="card report-card collapsible-card">
       <summary class="collapsible-summary">
-        <h2 id="breakdown-heading" class="card-title collapsible-summary-title">Theo danh mục</h2>
+        <h2 id="report-heading" class="card-title collapsible-summary-title">Báo cáo phân bổ chi tiêu tháng</h2>
         <span class="collapsible-chevron" aria-hidden="true">
           <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
         </span>
       </summary>
       <div class="collapsible-panel">
-        <ul id="category-breakdown" class="breakdown-list"></ul>
-      </div>
-    </details>
-
-    <details class="card pie-card collapsible-card">
-      <summary class="collapsible-summary">
-        <h2 id="pie-heading" class="card-title collapsible-summary-title">Phân bổ chi tiêu</h2>
-        <span class="collapsible-chevron" aria-hidden="true">
-          <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
-        </span>
-      </summary>
-      <div class="collapsible-panel">
-        <div class="pie-chart-wrap" id="pie-chart-wrap">
-          <p id="pie-chart-empty" class="pie-chart-empty">Chưa có khoản chi — biểu đồ sẽ hiện khi bạn thêm dữ liệu.</p>
-          <div id="pie-chart-body" class="pie-chart-body" hidden>
-            <svg
-              class="pie-svg"
-              id="expense-pie-svg"
-              viewBox="-105 -105 210 210"
-              role="img"
-              aria-labelledby="pie-svg-title"
-            >
-              <title id="pie-svg-title">Biểu đồ tròn chi tiêu theo danh mục</title>
-              <g id="expense-pie-slices"></g>
-            </svg>
-            <ul id="expense-pie-legend" class="pie-legend"></ul>
+        <div class="report-mode-bar" role="tablist" aria-label="Chế độ báo cáo phân bổ">
+          <button type="button" id="report-mode-breakdown" class="expense-filter-btn is-active" aria-pressed="true">Theo danh mục</button>
+          <button type="button" id="report-mode-pie" class="expense-filter-btn" aria-pressed="false">Biểu đồ tròn</button>
+        </div>
+        <div id="report-breakdown-view" class="report-view">
+          <ul id="category-breakdown" class="breakdown-list"></ul>
+        </div>
+        <div id="report-pie-view" class="report-view" hidden>
+          <div class="pie-chart-wrap" id="pie-chart-wrap">
+            <p id="pie-chart-empty" class="pie-chart-empty">Chưa có khoản chi — biểu đồ sẽ hiện khi bạn thêm dữ liệu.</p>
+            <div id="pie-chart-body" class="pie-chart-body" hidden>
+              <svg
+                class="pie-svg"
+                id="expense-pie-svg"
+                viewBox="-105 -105 210 210"
+                role="img"
+                aria-labelledby="pie-svg-title"
+              >
+                <title id="pie-svg-title">Biểu đồ tròn chi tiêu theo danh mục</title>
+                <g id="expense-pie-slices"></g>
+              </svg>
+              <ul id="expense-pie-legend" class="pie-legend"></ul>
+            </div>
           </div>
         </div>
       </div>
@@ -235,6 +278,18 @@
           />
         </div>
       </label>
+    </section>
+
+    <section class="card" aria-labelledby="settings-theme-heading">
+      <h2 id="settings-theme-heading" class="card-title">Giao diện</h2>
+      <p class="field-hint settings-hint">Chọn một bộ màu dịu mắt cho toàn bộ app.</p>
+      <div id="settings-theme-options" class="settings-theme-options" role="radiogroup" aria-label="Chọn giao diện màu">
+        <button type="button" class="theme-mode-btn" data-theme-mode="dark" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Dark</span></button>
+        <button type="button" class="theme-mode-btn" data-theme-mode="light" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Light</span></button>
+        <button type="button" class="theme-mode-btn" data-theme-mode="blue" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Blue</span></button>
+        <button type="button" class="theme-mode-btn" data-theme-mode="green" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Green</span></button>
+        <button type="button" class="theme-mode-btn" data-theme-mode="pink" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Pink</span></button>
+      </div>
     </section>
 
     <section class="card" aria-labelledby="settings-categories-heading">

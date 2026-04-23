@@ -178,7 +178,108 @@
   }
 
   function defaultSettings() {
-    return { defaultLimit: 0 };
+    return {
+      defaultLimit: 0,
+      themeMode: "dark",
+    };
+  }
+
+  var THEME_PRESETS = {
+    dark: {
+      appBg: "#0c1014",
+      appText: "#f0f4f8",
+      bgElevated: "#111820",
+      surface: "#161d26",
+      surface2: "#1c2530",
+      surfacePress: "#222c3a",
+      border: "rgba(255, 255, 255, 0.08)",
+      borderStrong: "rgba(255, 255, 255, 0.12)",
+      muted: "#8a9aad",
+      muted2: "#5c6b7f",
+      accent: "#34c3a0",
+      accentSoft: "rgba(52, 195, 160, 0.14)",
+      accentText: "#6ee4c4",
+      accentPress: "#2aa888",
+      danger: "#e07070",
+      dangerSoft: "rgba(224, 112, 112, 0.12)",
+    },
+    light: {
+      appBg: "#f3f6fb",
+      appText: "#1d2733",
+      bgElevated: "#ffffff",
+      surface: "#ffffff",
+      surface2: "#eef3fa",
+      surfacePress: "#e6edf7",
+      border: "rgba(18, 35, 56, 0.12)",
+      borderStrong: "rgba(18, 35, 56, 0.2)",
+      muted: "#5e6f85",
+      muted2: "#7b8b9e",
+      accent: "#2f8ef0",
+      accentSoft: "rgba(47, 142, 240, 0.14)",
+      accentText: "#246fc0",
+      accentPress: "#287ad0",
+      danger: "#c75f67",
+      dangerSoft: "rgba(199, 95, 103, 0.12)",
+    },
+    blue: {
+      appBg: "#0d1827",
+      appText: "#ecf3ff",
+      bgElevated: "#122136",
+      surface: "#17273f",
+      surface2: "#1c2f4a",
+      surfacePress: "#243b5d",
+      border: "rgba(154, 194, 255, 0.14)",
+      borderStrong: "rgba(154, 194, 255, 0.22)",
+      muted: "#90a7c5",
+      muted2: "#6f89aa",
+      accent: "#5ba8f0",
+      accentSoft: "rgba(91, 168, 240, 0.16)",
+      accentText: "#8bc3f8",
+      accentPress: "#498fd0",
+      danger: "#e37c8c",
+      dangerSoft: "rgba(227, 124, 140, 0.14)",
+    },
+    green: {
+      appBg: "#0f1a15",
+      appText: "#eef8f3",
+      bgElevated: "#13221b",
+      surface: "#182b22",
+      surface2: "#1e342a",
+      surfacePress: "#264236",
+      border: "rgba(152, 206, 178, 0.14)",
+      borderStrong: "rgba(152, 206, 178, 0.22)",
+      muted: "#90a99a",
+      muted2: "#6f8a7b",
+      accent: "#5ac48f",
+      accentSoft: "rgba(90, 196, 143, 0.16)",
+      accentText: "#85ddb0",
+      accentPress: "#45a775",
+      danger: "#df8a85",
+      dangerSoft: "rgba(223, 138, 133, 0.14)",
+    },
+    pink: {
+      appBg: "#1a1118",
+      appText: "#f8edf5",
+      bgElevated: "#241724",
+      surface: "#2b1b2b",
+      surface2: "#352136",
+      surfacePress: "#432a45",
+      border: "rgba(233, 172, 219, 0.14)",
+      borderStrong: "rgba(233, 172, 219, 0.22)",
+      muted: "#b59ab0",
+      muted2: "#917b8d",
+      accent: "#d87abf",
+      accentSoft: "rgba(216, 122, 191, 0.16)",
+      accentText: "#efabd9",
+      accentPress: "#bc61a4",
+      danger: "#e08898",
+      dangerSoft: "rgba(224, 136, 152, 0.14)",
+    },
+  };
+
+  function normalizeThemeMode(v) {
+    var key = typeof v === "string" ? v.trim().toLowerCase() : "";
+    return THEME_PRESETS[key] ? key : "dark";
   }
 
   function normalizeSettings(s) {
@@ -186,6 +287,7 @@
     var lim = out.defaultLimit;
     out.defaultLimit =
       typeof lim === "number" && !isNaN(lim) ? Math.max(0, Math.round(lim)) : 0;
+    out.themeMode = normalizeThemeMode(out.themeMode);
     return out;
   }
 
@@ -269,6 +371,30 @@
   if (!Array.isArray(app.fixedTemplates)) app.fixedTemplates = defaultFixedTemplates();
   if (!app.settings || typeof app.settings !== "object") app.settings = defaultSettings();
   app.settings = normalizeSettings(app.settings);
+
+  function applyThemeSettings() {
+    var root = document.documentElement;
+    var s = app && app.settings ? app.settings : defaultSettings();
+    var p = THEME_PRESETS[normalizeThemeMode(s.themeMode)];
+    root.style.setProperty("--app-bg", p.appBg);
+    root.style.setProperty("--app-text", p.appText);
+    root.style.setProperty("--bg-elevated", p.bgElevated);
+    root.style.setProperty("--surface", p.surface);
+    root.style.setProperty("--surface-2", p.surface2);
+    root.style.setProperty("--surface-press", p.surfacePress);
+    root.style.setProperty("--border", p.border);
+    root.style.setProperty("--border-strong", p.borderStrong);
+    root.style.setProperty("--muted", p.muted);
+    root.style.setProperty("--muted2", p.muted2);
+    root.style.setProperty("--accent", p.accent);
+    root.style.setProperty("--accent-soft", p.accentSoft);
+    root.style.setProperty("--accent-text", p.accentText);
+    root.style.setProperty("--accent-press", p.accentPress);
+    root.style.setProperty("--danger", p.danger);
+    root.style.setProperty("--danger-soft", p.dangerSoft);
+  }
+
+  applyThemeSettings();
 
   function migrateMonthIncomeUserSet(m) {
     if (!m || (m.incomeUserSet !== undefined && m.incomeUserSet !== null)) return;
@@ -376,6 +502,7 @@
   var editingExpenseId = null;
   var editingFixedTemplateId = null;
   var editingCategoryId = null;
+  var expenseListFilter = "all";
   var incomeProgrammatic = false;
   var incomeDirty = false;
 
@@ -503,9 +630,22 @@
   var elExpenseFixed = document.getElementById("expense-fixed");
   var elExpenseList = document.getElementById("expense-list");
   var elEmpty = document.getElementById("empty-state");
+  var elExpenseFilterAll = document.getElementById("expense-filter-all");
+  var elExpenseFilterFixed = document.getElementById("expense-filter-fixed");
+  var elExpenseFilterFlex = document.getElementById("expense-filter-flex");
+  var elReportModeBreakdown = document.getElementById("report-mode-breakdown");
+  var elReportModePie = document.getElementById("report-mode-pie");
+  var elReportBreakdownView = document.getElementById("report-breakdown-view");
+  var elReportPieView = document.getElementById("report-pie-view");
   var elSumIncome = document.getElementById("sum-income");
   var elSumExpenses = document.getElementById("sum-expenses");
   var elSumBalance = document.getElementById("sum-balance");
+  var elMonthForecastNote = document.getElementById("month-forecast-note");
+  var elMonthForecastDay = document.getElementById("month-forecast-day");
+  var elMonthForecastWeek = document.getElementById("month-forecast-week");
+  var elBalanceForecastNote = document.getElementById("balance-forecast-note");
+  var elBalanceForecastDay = document.getElementById("balance-forecast-day");
+  var elBalanceForecastWeek = document.getElementById("balance-forecast-week");
   var elBreakdown = document.getElementById("category-breakdown");
   var elBtnClear = document.getElementById("btn-clear-all");
   var elPieEmpty = document.getElementById("pie-chart-empty");
@@ -529,6 +669,7 @@
   var elBtnCloseSettings = document.getElementById("btn-close-settings");
   var elSettingsDefaultLimit = document.getElementById("settings-default-limit");
   var elSettingsDefaultLimitPreview = document.getElementById("settings-default-limit-preview");
+  var elSettingsThemeOptions = document.getElementById("settings-theme-options");
   var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
   var elSettingsAddFixedForm = document.getElementById("settings-add-fixed-form");
   var elSettingsAddFixedCategory = document.getElementById("settings-add-fixed-category");
@@ -569,6 +710,7 @@
   var elEditTemplateNote = document.getElementById("edit-expense-template-note");
   var elEditSave = document.getElementById("edit-expense-save");
   var elEditCancel = document.getElementById("edit-expense-cancel");
+  var reportMode = "breakdown";
 
   function fillCategorySelect(el) {
     if (!el) return;
@@ -1036,6 +1178,95 @@
     if (highlight) {
       highlight.classList.toggle("negative", balance < 0);
     }
+    renderBalanceForecast(balance, income);
+  }
+
+  function parseMonthKeyParts(key) {
+    var m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(key || ""));
+    if (!m) return null;
+    return { year: parseInt(m[1], 10), month: parseInt(m[2], 10) };
+  }
+
+  function calcRemainingDaysAndWeeks(monthKey) {
+    var p = parseMonthKeyParts(monthKey);
+    if (!p) return { days: 0, weeks: 0 };
+    var monthStart = new Date(p.year, p.month - 1, 1);
+    var monthEnd = new Date(p.year, p.month, 0);
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (today > monthEnd) return { days: 0, weeks: 0 };
+    var from = today < monthStart ? monthStart : today;
+    var oneDayMs = 24 * 60 * 60 * 1000;
+    var days = Math.floor((monthEnd.getTime() - from.getTime()) / oneDayMs) + 1;
+    if (days < 0) days = 0;
+    var weeks = days > 0 ? days / 7 : 0;
+    return { days: days, weeks: weeks };
+  }
+
+  function calcMonthDaysAndWeeks(monthKey) {
+    var p = parseMonthKeyParts(monthKey);
+    if (!p) return { days: 0, weeks: 0 };
+    var days = new Date(p.year, p.month, 0).getDate();
+    var weeks = days > 0 ? days / 7 : 0;
+    return { days: days, weeks: weeks };
+  }
+
+  function renderBalanceForecast(balance, income) {
+    if (
+      !elMonthForecastNote ||
+      !elMonthForecastDay ||
+      !elMonthForecastWeek ||
+      !elBalanceForecastNote ||
+      !elBalanceForecastDay ||
+      !elBalanceForecastWeek
+    ) {
+      return;
+    }
+    var monthPeriod = calcMonthDaysAndWeeks(activeMonthKey);
+    if (monthPeriod.days > 0) {
+      var monthPerDay = income / monthPeriod.days;
+      var monthPerWeek = monthPeriod.weeks > 0 ? income / monthPeriod.weeks : income;
+      elMonthForecastNote.textContent =
+        "Theo hạn mức ban đầu của tháng (" +
+        formatMoneyVND(income) +
+        ") trong " +
+        monthPeriod.days +
+        " ngày.";
+      elMonthForecastDay.textContent = formatMoneyVND(Math.round(monthPerDay));
+      elMonthForecastWeek.textContent = formatMoneyVND(Math.round(monthPerWeek));
+    } else {
+      elMonthForecastNote.textContent = "Không đọc được thông tin tháng hiện tại.";
+      elMonthForecastDay.textContent = "-";
+      elMonthForecastWeek.textContent = "-";
+    }
+
+    var period = calcRemainingDaysAndWeeks(activeMonthKey);
+    if (period.days <= 0) {
+      elBalanceForecastNote.textContent = "Tháng này không còn ngày nào để phân bổ.";
+      elBalanceForecastDay.textContent = "-";
+      elBalanceForecastWeek.textContent = "-";
+      return;
+    }
+    var perDay = balance / period.days;
+    var perWeek = period.weeks > 0 ? balance / period.weeks : balance;
+    var roundWeeksForNote = Math.floor(period.weeks);
+    if (period.weeks - roundWeeksForNote > 0.5) roundWeeksForNote += 1;
+    elBalanceForecastNote.textContent =
+      "Còn " + period.days + " ngày (~" + roundWeeksForNote + " tuần).";
+    elBalanceForecastDay.textContent = formatMoneyVND(Math.round(perDay));
+    elBalanceForecastWeek.textContent = formatMoneyVND(Math.round(perWeek));
+  }
+
+  function renderThemeModeOptions() {
+    if (!elSettingsThemeOptions) return;
+    var mode = normalizeThemeMode(app.settings && app.settings.themeMode);
+    var buttons = elSettingsThemeOptions.querySelectorAll(".theme-mode-btn");
+    var i;
+    for (i = 0; i < buttons.length; i++) {
+      var active = buttons[i].getAttribute("data-theme-mode") === mode;
+      buttons[i].classList.toggle("is-active", active);
+      buttons[i].setAttribute("aria-pressed", active ? "true" : "false");
+    }
   }
 
   function renderBreakdown() {
@@ -1180,10 +1411,18 @@
   function renderExpenseList() {
     elExpenseList.innerHTML = "";
     if (!state) return;
-    var hasRows = state.expenses.length > 0;
+    var rows = getVisibleExpenses();
+    var hasRows = rows.length > 0;
     elEmpty.hidden = hasRows;
+    if (!hasRows) {
+      elEmpty.textContent =
+        expenseListFilter === "all"
+          ? "Chưa có khoản chi. Thêm ở trên."
+          : "Không có khoản chi phù hợp bộ lọc.";
+    }
+    renderExpenseFilterButtons();
 
-    state.expenses.forEach(function (e) {
+    rows.forEach(function (e) {
       var li = document.createElement("li");
       li.className = "expense-row";
       li.dataset.id = e.id;
@@ -1246,6 +1485,87 @@
       li.appendChild(actions);
       elExpenseList.appendChild(li);
     });
+
+    var total = rows.reduce(function (sum, e) {
+      return sum + (typeof e.amount === "number" ? e.amount : 0);
+    }, 0);
+    var totalLi = document.createElement("li");
+    totalLi.className = "expense-total-row";
+    totalLi.innerHTML =
+      '<span class="expense-total-label">Tổng chi</span><span class="expense-total-amount"></span>';
+    totalLi.querySelector(".expense-total-amount").textContent = formatMoneyVND(total);
+    elExpenseList.appendChild(totalLi);
+  }
+
+  function isFixedExpenseRow(e) {
+    return !!(e && e.templateId);
+  }
+
+  function expenseDisplayName(e) {
+    if (!e) return "";
+    if (typeof e.name === "string" && e.name.trim()) return e.name.trim();
+    return getCategoryLabel(e.category);
+  }
+
+  function getVisibleExpenses() {
+    if (!state || !Array.isArray(state.expenses)) return [];
+    var rows = state.expenses.filter(function (e) {
+      if (expenseListFilter === "fixed") return isFixedExpenseRow(e);
+      if (expenseListFilter === "flex") return !isFixedExpenseRow(e);
+      return true;
+    });
+    rows.sort(function (a, b) {
+      var af = isFixedExpenseRow(a) ? 0 : 1;
+      var bf = isFixedExpenseRow(b) ? 0 : 1;
+      if (af !== bf) return af - bf;
+      var cmp = expenseDisplayName(a).localeCompare(expenseDisplayName(b), "vi", {
+        sensitivity: "base",
+      });
+      if (cmp !== 0) return cmp;
+      return String(a.id || "").localeCompare(String(b.id || ""));
+    });
+    return rows;
+  }
+
+  function renderExpenseFilterButtons() {
+    var map = [
+      { key: "all", el: elExpenseFilterAll },
+      { key: "fixed", el: elExpenseFilterFixed },
+      { key: "flex", el: elExpenseFilterFlex },
+    ];
+    map.forEach(function (x) {
+      if (!x.el) return;
+      var active = expenseListFilter === x.key;
+      x.el.classList.toggle("is-active", active);
+      x.el.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function setExpenseFilter(next) {
+    if (next !== "all" && next !== "fixed" && next !== "flex") return;
+    expenseListFilter = next;
+    renderExpenseList();
+  }
+
+  function renderReportModeButtons() {
+    var map = [
+      { key: "breakdown", el: elReportModeBreakdown },
+      { key: "pie", el: elReportModePie },
+    ];
+    map.forEach(function (x) {
+      if (!x.el) return;
+      var active = reportMode === x.key;
+      x.el.classList.toggle("is-active", active);
+      x.el.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (elReportBreakdownView) elReportBreakdownView.hidden = reportMode !== "breakdown";
+    if (elReportPieView) elReportPieView.hidden = reportMode !== "pie";
+  }
+
+  function setReportMode(next) {
+    if (next !== "breakdown" && next !== "pie") return;
+    reportMode = next;
+    renderReportModeButtons();
   }
 
   function scrollAndHighlightExpenseRow(expenseId) {
@@ -1269,6 +1589,7 @@
     renderBreakdown();
     renderExpenseList();
     renderPieChart();
+    renderReportModeButtons();
     renderFixedTemplatesList();
     if (elSideMenu && !elSideMenu.hidden) {
       renderSideMenuList();
@@ -1475,6 +1796,7 @@
       elSettingsDefaultLimit.value = formatAsNganDisplay(getDefaultMonthlyLimit());
       updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
     }
+    renderThemeModeOptions();
     renderFixedTemplatesList();
     renderSettingsCategoriesList();
     renderSettingsNewCategoryIconPicker();
@@ -1607,18 +1929,46 @@
     scrollAndHighlightExpenseRow(row.id);
   });
 
-  elBtnClear.addEventListener("click", function () {
-    if (!state || !state.expenses.length) return;
-    if (
-      confirm(
-        "Xóa hết các khoản chi của tháng này? Hạn mức tháng giữ nguyên. Các khoản cố định sẽ được thêm lại ngay."
-      )
-    ) {
-      state.expenses = [];
-      syncFixedIntoMonth(state);
-      persistAndRender();
-    }
-  });
+  if (elBtnClear) {
+    elBtnClear.addEventListener("click", function () {
+      if (!state || !state.expenses.length) return;
+      if (
+        confirm(
+          "Xóa hết các khoản chi của tháng này? Hạn mức tháng giữ nguyên. Các khoản cố định sẽ được thêm lại ngay."
+        )
+      ) {
+        state.expenses = [];
+        syncFixedIntoMonth(state);
+        persistAndRender();
+      }
+    });
+  }
+
+  if (elExpenseFilterAll) {
+    elExpenseFilterAll.addEventListener("click", function () {
+      setExpenseFilter("all");
+    });
+  }
+  if (elExpenseFilterFixed) {
+    elExpenseFilterFixed.addEventListener("click", function () {
+      setExpenseFilter("fixed");
+    });
+  }
+  if (elExpenseFilterFlex) {
+    elExpenseFilterFlex.addEventListener("click", function () {
+      setExpenseFilter("flex");
+    });
+  }
+  if (elReportModeBreakdown) {
+    elReportModeBreakdown.addEventListener("click", function () {
+      setReportMode("breakdown");
+    });
+  }
+  if (elReportModePie) {
+    elReportModePie.addEventListener("click", function () {
+      setReportMode("pie");
+    });
+  }
 
   elBtnOpenMenu.addEventListener("click", openSideMenu);
   elBtnCloseMenu.addEventListener("click", closeSideMenu);
@@ -1632,6 +1982,19 @@
       app.settings.defaultLimit = parseMoneyToVND(elSettingsDefaultLimit.value);
       elSettingsDefaultLimit.value = formatAsNganDisplay(app.settings.defaultLimit);
       updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+      saveAppData();
+    });
+  }
+
+  if (elSettingsThemeOptions) {
+    elSettingsThemeOptions.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest(".theme-mode-btn") : null;
+      if (!btn) return;
+      var mode = normalizeThemeMode(btn.getAttribute("data-theme-mode"));
+      if (mode === app.settings.themeMode) return;
+      app.settings.themeMode = mode;
+      applyThemeSettings();
+      renderThemeModeOptions();
       saveAppData();
     });
   }
@@ -1873,6 +2236,25 @@
         closeSideMenu();
       }
     }
+  });
+
+  function closeInfoPopups(exceptDetails) {
+    var opened = document.querySelectorAll(
+      "details.inline-info-hint[open], details.summary-forecast-info[open]"
+    );
+    var i;
+    for (i = 0; i < opened.length; i++) {
+      if (exceptDetails && opened[i] === exceptDetails) continue;
+      opened[i].removeAttribute("open");
+    }
+  }
+
+  document.addEventListener("click", function (ev) {
+    var keepOpen =
+      ev.target && ev.target.closest
+        ? ev.target.closest("details.inline-info-hint, details.summary-forecast-info")
+        : null;
+    if (!keepOpen) closeInfoPopups(null);
   });
 
   elMenuJumpBtn.addEventListener("click", function () {
