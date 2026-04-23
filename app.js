@@ -1687,12 +1687,13 @@
 
   function setSideMenuRowOffset(li, px, animate) {
     if (!li) return;
-    var track = li.querySelector(".side-menu-swipe-track");
-    if (!track) return;
+    var main = li.querySelector(".side-menu-swipe-main");
+    if (!main) return;
     var x = Math.max(0, Math.min(SIDE_MENU_SWIPE_DELETE_PX, Math.round(px || 0)));
-    track.style.transition = animate ? "transform 0.2s ease" : "none";
-    track.style.transform = "translateX(" + -x + "px)";
+    main.style.transition = animate ? "transform 0.2s ease" : "none";
+    main.style.transform = "translateX(" + -x + "px)";
     li.dataset.swipeOffset = String(x);
+    li.classList.toggle("is-swiped", x > 0);
     li.classList.toggle("is-swiped-open", x >= SIDE_MENU_SWIPE_DELETE_PX);
   }
 
@@ -1864,7 +1865,16 @@
       var btnDelete = document.createElement("button");
       btnDelete.type = "button";
       btnDelete.className = "side-menu-item-delete";
-      btnDelete.textContent = "Xóa";
+      btnDelete.setAttribute("aria-label", "Xóa tháng này");
+      var svgDelete = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svgDelete.setAttribute("class", "icon-svg");
+      svgDelete.setAttribute("width", "16");
+      svgDelete.setAttribute("height", "16");
+      svgDelete.setAttribute("aria-hidden", "true");
+      var useDelete = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      useDelete.setAttribute("href", "#icon-trash");
+      svgDelete.appendChild(useDelete);
+      btnDelete.appendChild(svgDelete);
       btnDelete.addEventListener("click", function (ev) {
         ev.stopPropagation();
         deleteMonthDataByKey(k);

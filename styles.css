@@ -433,30 +433,50 @@ body {
 }
 
 .side-menu-swipe-track {
-  display: flex;
-  align-items: stretch;
-  width: calc(100% + 4.2rem);
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 100%;
+}
+
+.side-menu-swipe-main {
+  position: relative;
+  z-index: 2;
+  width: 100%;
   transform: translateX(0);
   transition: transform 0.2s ease;
   will-change: transform;
 }
 
-.side-menu-swipe-main {
-  width: calc(100% - 4.2rem);
-  flex-shrink: 0;
-}
-
 .side-menu-item-delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 4.2rem;
-  flex-shrink: 0;
+  z-index: 1;
+  padding: 0;
   border: none;
-  border-radius: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: rgba(224, 112, 112, 0.2);
   color: var(--danger);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease, background 0.12s ease;
   cursor: pointer;
+}
+
+.side-menu-list li.is-swiped .side-menu-item-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.side-menu-item-delete .icon-svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .side-menu-item-delete:active {
