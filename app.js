@@ -12,6 +12,7 @@
     { id: "shield", sym: "🛡️" },
     { id: "cart", sym: "🛒" },
     { id: "car", sym: "🚗" },
+    { id: "baby", sym: "👶" },
     { id: "home", sym: "🏠" },
     { id: "pill", sym: "💊" },
     { id: "bolt", sym: "⚡" },
@@ -24,6 +25,7 @@
     shield: "Bảo hiểm",
     cart: "Siêu thị",
     car: "Đi lại",
+    baby: "Baby",
     home: "Nhà cửa",
     pill: "Sức khỏe",
     bolt: "Điện nước",
@@ -239,46 +241,84 @@
       danger: "#e37c8c",
       dangerSoft: "rgba(227, 124, 140, 0.14)",
     },
-    green: {
-      appBg: "#0f1a15",
-      appText: "#eef8f3",
-      bgElevated: "#13221b",
-      surface: "#182b22",
-      surface2: "#1e342a",
-      surfacePress: "#264236",
-      border: "rgba(152, 206, 178, 0.14)",
-      borderStrong: "rgba(152, 206, 178, 0.22)",
-      muted: "#90a99a",
-      muted2: "#6f8a7b",
-      accent: "#5ac48f",
-      accentSoft: "rgba(90, 196, 143, 0.16)",
-      accentText: "#85ddb0",
-      accentPress: "#45a775",
-      danger: "#df8a85",
-      dangerSoft: "rgba(223, 138, 133, 0.14)",
+    mint: {
+      appBg: "#eef8f3",
+      appText: "#1f2c25",
+      bgElevated: "#ffffff",
+      surface: "#ffffff",
+      surface2: "#e8f4ed",
+      surfacePress: "#deede4",
+      border: "rgba(35, 68, 52, 0.12)",
+      borderStrong: "rgba(35, 68, 52, 0.2)",
+      muted: "#5c7265",
+      muted2: "#7a9084",
+      accent: "#4fab7f",
+      accentSoft: "rgba(79, 171, 127, 0.14)",
+      accentText: "#2f7f5d",
+      accentPress: "#43996f",
+      danger: "#c86f6a",
+      dangerSoft: "rgba(200, 111, 106, 0.12)",
     },
-    pink: {
-      appBg: "#1a1118",
-      appText: "#f8edf5",
-      bgElevated: "#241724",
-      surface: "#2b1b2b",
-      surface2: "#352136",
-      surfacePress: "#432a45",
-      border: "rgba(233, 172, 219, 0.14)",
-      borderStrong: "rgba(233, 172, 219, 0.22)",
-      muted: "#b59ab0",
-      muted2: "#917b8d",
-      accent: "#d87abf",
-      accentSoft: "rgba(216, 122, 191, 0.16)",
-      accentText: "#efabd9",
-      accentPress: "#bc61a4",
-      danger: "#e08898",
-      dangerSoft: "rgba(224, 136, 152, 0.14)",
+    purple: {
+      appBg: "#23171f",
+      appText: "#f9edf2",
+      bgElevated: "#2d1d27",
+      surface: "#35222e",
+      surface2: "#402834",
+      surfacePress: "#4e3241",
+      border: "rgba(238, 182, 203, 0.16)",
+      borderStrong: "rgba(238, 182, 203, 0.24)",
+      muted: "#ba9ba8",
+      muted2: "#987b87",
+      accent: "#e184ac",
+      accentSoft: "rgba(225, 132, 172, 0.16)",
+      accentText: "#f1b2cb",
+      accentPress: "#c76f95",
+      danger: "#e0918f",
+      dangerSoft: "rgba(224, 145, 143, 0.14)",
+    },
+    "pink-pastel": {
+      appBg: "#fff2f8",
+      appText: "#2d2430",
+      bgElevated: "#ffffff",
+      surface: "#ffffff",
+      surface2: "#fdebf4",
+      surfacePress: "#f7e0ec",
+      border: "rgba(99, 53, 82, 0.13)",
+      borderStrong: "rgba(99, 53, 82, 0.21)",
+      muted: "#756274",
+      muted2: "#957e93",
+      accent: "#ce78a4",
+      accentSoft: "rgba(206, 120, 164, 0.14)",
+      accentText: "#a85d84",
+      accentPress: "#b7648f",
+      danger: "#cc7478",
+      dangerSoft: "rgba(204, 116, 120, 0.12)",
+    },
+    gray: {
+      appBg: "#e6e6e8",
+      appText: "#25272b",
+      bgElevated: "#ffffff",
+      surface: "#ffffff",
+      surface2: "#e0e0e3",
+      surfacePress: "#d4d5da",
+      border: "rgba(37, 39, 43, 0.13)",
+      borderStrong: "rgba(37, 39, 43, 0.22)",
+      muted: "#60636b",
+      muted2: "#7d8088",
+      accent: "#6d7684",
+      accentSoft: "rgba(109, 118, 132, 0.14)",
+      accentText: "#4f5764",
+      accentPress: "#5f6774",
+      danger: "#b06e72",
+      dangerSoft: "rgba(176, 110, 114, 0.12)",
     },
   };
 
   function normalizeThemeMode(v) {
     var key = typeof v === "string" ? v.trim().toLowerCase() : "";
+    if (key === "green") key = "mint";
+    if (key === "pink") key = "purple";
     return THEME_PRESETS[key] ? key : "dark";
   }
 
@@ -669,7 +709,8 @@
   var elBtnCloseSettings = document.getElementById("btn-close-settings");
   var elSettingsDefaultLimit = document.getElementById("settings-default-limit");
   var elSettingsDefaultLimitPreview = document.getElementById("settings-default-limit-preview");
-  var elSettingsThemeOptions = document.getElementById("settings-theme-options");
+  var elSettingsThemeSelect = document.getElementById("settings-theme-select");
+  var elSettingsThemePreview = document.getElementById("settings-theme-preview");
   var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
   var elSettingsAddFixedForm = document.getElementById("settings-add-fixed-form");
   var elSettingsAddFixedCategory = document.getElementById("settings-add-fixed-category");
@@ -1258,14 +1299,13 @@
   }
 
   function renderThemeModeOptions() {
-    if (!elSettingsThemeOptions) return;
+    if (!elSettingsThemeSelect) return;
     var mode = normalizeThemeMode(app.settings && app.settings.themeMode);
-    var buttons = elSettingsThemeOptions.querySelectorAll(".theme-mode-btn");
-    var i;
-    for (i = 0; i < buttons.length; i++) {
-      var active = buttons[i].getAttribute("data-theme-mode") === mode;
-      buttons[i].classList.toggle("is-active", active);
-      buttons[i].setAttribute("aria-pressed", active ? "true" : "false");
+    elSettingsThemeSelect.value = mode;
+    if (elSettingsThemePreview) {
+      var preset = THEME_PRESETS[mode] || THEME_PRESETS.dark;
+      elSettingsThemePreview.style.background =
+        "linear-gradient(135deg, " + preset.appBg + " 0%, " + preset.accent + " 100%)";
     }
   }
 
@@ -1515,16 +1555,20 @@
       return true;
     });
     rows.sort(function (a, b) {
-      var af = isFixedExpenseRow(a) ? 0 : 1;
-      var bf = isFixedExpenseRow(b) ? 0 : 1;
-      if (af !== bf) return af - bf;
-      var cmp = expenseDisplayName(a).localeCompare(expenseDisplayName(b), "vi", {
-        sensitivity: "base",
-      });
-      if (cmp !== 0) return cmp;
-      return String(a.id || "").localeCompare(String(b.id || ""));
+      var at = expenseCreatedAt(a);
+      var bt = expenseCreatedAt(b);
+      if (at !== bt) return bt - at;
+      return String(b.id || "").localeCompare(String(a.id || ""));
     });
     return rows;
+  }
+
+  function expenseCreatedAt(e) {
+    var id = e && typeof e.id === "string" ? e.id : "";
+    var m = /^e-([0-9a-z]+)-/.exec(id);
+    if (!m) return 0;
+    var n = parseInt(m[1], 36);
+    return isNaN(n) ? 0 : n;
   }
 
   function renderExpenseFilterButtons() {
@@ -1986,11 +2030,9 @@
     });
   }
 
-  if (elSettingsThemeOptions) {
-    elSettingsThemeOptions.addEventListener("click", function (ev) {
-      var btn = ev.target && ev.target.closest ? ev.target.closest(".theme-mode-btn") : null;
-      if (!btn) return;
-      var mode = normalizeThemeMode(btn.getAttribute("data-theme-mode"));
+  if (elSettingsThemeSelect) {
+    elSettingsThemeSelect.addEventListener("change", function () {
+      var mode = normalizeThemeMode(elSettingsThemeSelect.value);
       if (mode === app.settings.themeMode) return;
       app.settings.themeMode = mode;
       applyThemeSettings();

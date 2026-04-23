@@ -283,13 +283,23 @@
     <section class="card" aria-labelledby="settings-theme-heading">
       <h2 id="settings-theme-heading" class="card-title">Giao diện</h2>
       <p class="field-hint settings-hint">Chọn một bộ màu dịu mắt cho toàn bộ app.</p>
-      <div id="settings-theme-options" class="settings-theme-options" role="radiogroup" aria-label="Chọn giao diện màu">
-        <button type="button" class="theme-mode-btn" data-theme-mode="dark" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Dark</span></button>
-        <button type="button" class="theme-mode-btn" data-theme-mode="light" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Light</span></button>
-        <button type="button" class="theme-mode-btn" data-theme-mode="blue" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Blue</span></button>
-        <button type="button" class="theme-mode-btn" data-theme-mode="green" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Green</span></button>
-        <button type="button" class="theme-mode-btn" data-theme-mode="pink" aria-pressed="false"><span class="theme-mode-swatch" aria-hidden="true"></span><span>Pink</span></button>
-      </div>
+      <label class="field settings-theme-select-field">
+        <span class="field-label">Bộ màu</span>
+        <div class="settings-theme-select-row">
+          <span id="settings-theme-preview" class="settings-theme-preview" aria-hidden="true"></span>
+          <div class="select-wrap">
+            <select id="settings-theme-select" aria-label="Chọn bộ màu">
+              <option value="dark">● Dark</option>
+              <option value="light">◯ Light</option>
+              <option value="blue">🔵 Blue</option>
+              <option value="mint">🟢 Mint</option>
+              <option value="purple">🟣 Purple</option>
+              <option value="pink-pastel">🩷 Pink Pastel</option>
+              <option value="gray">⚪ Gray</option>
+            </select>
+          </div>
+        </div>
+      </label>
     </section>
 
     <section class="card" aria-labelledby="settings-categories-heading">
