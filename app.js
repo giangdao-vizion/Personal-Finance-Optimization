@@ -18,6 +18,18 @@
     { id: "money", sym: "💰" },
     { id: "pin", sym: "📌" },
   ];
+  var ICON_PRESET_NAMES = {
+    food: "Ăn uống",
+    receipt: "Hóa đơn",
+    shield: "Bảo hiểm",
+    cart: "Siêu thị",
+    car: "Đi lại",
+    home: "Nhà cửa",
+    pill: "Sức khỏe",
+    bolt: "Điện nước",
+    money: "Tài chính",
+    pin: "Khác",
+  };
 
   /** Nhãn cho id danh mục cũ (trước khi có danh mục tùy chỉnh) — dùng khi gộp dữ liệu cũ */
   var LEGACY_CATEGORY_LABELS = {
@@ -526,8 +538,7 @@
   var elSettingsCategoriesList = document.getElementById("settings-categories-list");
   var elSettingsAddCategoryForm = document.getElementById("settings-add-category-form");
   var elSettingsNewCategoryLabel = document.getElementById("settings-new-category-label");
-  var elSettingsNewCategoryIcons = document.getElementById("settings-new-category-icons");
-  var elSettingsNewCategoryIconId = document.getElementById("settings-new-category-icon-id");
+  var elSettingsNewCategoryIconSelect = document.getElementById("settings-new-category-icon-select");
   var elEditCategoryDialog = document.getElementById("edit-category-dialog");
   var elEditCategoryBackdrop = document.getElementById("edit-category-backdrop");
   var elEditCategoryLabelInput = document.getElementById("edit-category-label-input");
@@ -551,6 +562,8 @@
   var elEditDialog = document.getElementById("edit-expense-dialog");
   var elEditBackdrop = document.getElementById("edit-expense-backdrop");
   var elEditDesc = document.getElementById("edit-expense-desc");
+  var elEditExpenseCategory = document.getElementById("edit-expense-category");
+  var elEditExpenseName = document.getElementById("edit-expense-name");
   var elEditAmount = document.getElementById("edit-expense-amount");
   var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
   var elEditTemplateNote = document.getElementById("edit-expense-template-note");
@@ -572,6 +585,7 @@
     fillCategorySelect(elCategory);
     fillCategorySelect(elSettingsAddFixedCategory);
     fillCategorySelect(elEditFixedCategory);
+    fillCategorySelect(elEditExpenseCategory);
   }
 
   function renderIconPicker(containerEl, hiddenEl, selectedId) {
@@ -609,8 +623,22 @@
   }
 
   function renderSettingsNewCategoryIconPicker() {
-    var start = elSettingsNewCategoryIconId && elSettingsNewCategoryIconId.value;
-    renderIconPicker(elSettingsNewCategoryIcons, elSettingsNewCategoryIconId, start || "food");
+    if (!elSettingsNewCategoryIconSelect) return;
+    var current = elSettingsNewCategoryIconSelect.value || "food";
+    elSettingsNewCategoryIconSelect.innerHTML = "";
+    ICON_PRESETS.forEach(function (p) {
+      var opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.sym;
+      opt.title = ICON_PRESET_NAMES[p.id] || p.id;
+      elSettingsNewCategoryIconSelect.appendChild(opt);
+    });
+    elSettingsNewCategoryIconSelect.value = current;
+    if (!elSettingsNewCategoryIconSelect.value) {
+      elSettingsNewCategoryIconSelect.value = "food";
+    }
+    var selected = ICON_PRESET_NAMES[elSettingsNewCategoryIconSelect.value] || "Biểu tượng";
+    elSettingsNewCategoryIconSelect.title = "Biểu tượng: " + selected;
   }
 
   function renderSettingsCategoriesList() {
@@ -1220,6 +1248,20 @@
     });
   }
 
+  function scrollAndHighlightExpenseRow(expenseId) {
+    if (!expenseId || !elExpenseList) return;
+    var row = elExpenseList.querySelector('.expense-row[data-id="' + expenseId + '"]');
+    if (!row) return;
+    row.classList.remove("expense-row-new-highlight");
+    // Force reflow to restart animation if needed.
+    void row.offsetWidth;
+    row.classList.add("expense-row-new-highlight");
+    row.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    setTimeout(function () {
+      row.classList.remove("expense-row-new-highlight");
+    }, 2000);
+  }
+
   function persistAndRender() {
     if (!activeMonthKey || !state) return;
     saveAppData();
@@ -1562,7 +1604,7 @@
     updateAmountPreview(elAmount, elExpensePreview);
     if (elExpenseFixed) elExpenseFixed.checked = false;
     persistAndRender();
-    elAmount.focus();
+    scrollAndHighlightExpenseRow(row.id);
   });
 
   elBtnClear.addEventListener("click", function () {
@@ -1603,7 +1645,7 @@
         return;
       }
       if (lab.length > 40) lab = lab.slice(0, 40);
-      var iconId = elSettingsNewCategoryIconId ? elSettingsNewCategoryIconId.value : "pin";
+      var iconId = elSettingsNewCategoryIconSelect ? elSettingsNewCategoryIconSelect.value : "pin";
       app.categories.push(
         normalizeCategoryRow({ id: catUid(), label: lab, iconId: iconId })
       );
@@ -1613,6 +1655,12 @@
       renderSettingsNewCategoryIconPicker();
       refreshAllCategorySelects();
       if (activeMonthKey && state) persistAndRender();
+    });
+  }
+  if (elSettingsNewCategoryIconSelect) {
+    elSettingsNewCategoryIconSelect.addEventListener("change", function () {
+      var selected = ICON_PRESET_NAMES[elSettingsNewCategoryIconSelect.value] || "Biểu tượng";
+      elSettingsNewCategoryIconSelect.title = "Biểu tượng: " + selected;
     });
   }
 
@@ -1675,6 +1723,8 @@
     var cat = getCategoryLabel(e.category);
     var line = e.name ? e.name + " · " + cat : cat;
     elEditDesc.textContent = line;
+    if (elEditExpenseCategory) elEditExpenseCategory.value = e.category;
+    if (elEditExpenseName) elEditExpenseName.value = e.name || "";
     elEditAmount.value = formatAsNganDisplay(e.amount);
     updateAmountPreview(elEditAmount, elEditAmountPreview);
     if (elEditTemplateNote) {
@@ -1769,15 +1819,24 @@
       closeEditExpenseDialog();
       return;
     }
+    var cat = elEditExpenseCategory ? elEditExpenseCategory.value : e.category;
+    if (!categoryIdExists(cat)) return;
+    var nameTrim = elEditExpenseName ? elEditExpenseName.value.trim() : "";
     var amount = parseMoneyToVND(elEditAmount.value);
     if (amount <= 0) {
       elEditAmount.focus();
       return;
     }
+    e.category = cat;
+    e.name = nameTrim;
     e.amount = amount;
     if (e.templateId) {
       var t = findFixedTemplate(e.templateId);
-      if (t) t.amount = amount;
+      if (t) {
+        t.category = cat;
+        t.name = nameTrim;
+        t.amount = amount;
+      }
     }
     closeEditExpenseDialog();
     persistAndRender();
@@ -1836,6 +1895,7 @@
   fillCategorySelect(elCategory);
   fillCategorySelect(elSettingsAddFixedCategory);
   fillCategorySelect(elEditFixedCategory);
+  fillCategorySelect(elEditExpenseCategory);
   bindAmountPreview(elIncome, elIncomePreview);
   bindAmountPreview(elAmount, elExpensePreview);
   bindAmountPreview(elEditAmount, elEditAmountPreview);

@@ -140,7 +140,12 @@
             <input type="checkbox" id="expense-fixed" />
             <span class="checkbox-label-text">Cố định hàng tháng</span>
           </label>
-          <span class="field-hint">Tháng mới sẽ tự có khoản này. Sửa số tiền trong danh sách chi để cập nhật mặc định cho các tháng sau.</span>
+          <details class="inline-info-hint">
+            <summary aria-label="Xem thông tin về khoản cố định">
+              <span class="inline-info-icon" aria-hidden="true">i</span>
+            </summary>
+            <p class="field-hint">Tháng mới sẽ tự có khoản này. Sửa số tiền trong danh sách chi để cập nhật mặc định cho các tháng sau.</p>
+          </details>
         </div>
         <button type="submit" class="btn btn-primary btn-block">Thêm vào danh sách</button>
       </form>
@@ -237,21 +242,21 @@
       <p class="field-hint settings-hint">Mặc định có sẵn vài danh mục; bạn có thể đổi tên, xóa hoặc thêm mới. Phải giữ ít nhất một danh mục. Khi xóa, mọi khoản chi và khoản cố định đang dùng danh mục đó sẽ chuyển sang danh mục còn lại đầu tiên trong danh sách.</p>
       <ul id="settings-categories-list" class="settings-categories-list"></ul>
       <form id="settings-add-category-form" class="settings-add-category-form">
-        <label class="field">
-          <span class="field-label">Tên danh mục mới</span>
-          <input
-            type="text"
-            id="settings-new-category-label"
-            maxlength="40"
-            required
-            placeholder="Ví dụ: Giải trí"
-            autocomplete="off"
-          />
-        </label>
         <div class="field">
-          <span class="field-label">Biểu tượng</span>
-          <div id="settings-new-category-icons" class="icon-picker" role="group" aria-label="Chọn biểu tượng"></div>
-          <input type="hidden" id="settings-new-category-icon-id" value="food" />
+          <span class="field-label">Tạo danh mục mới</span>
+          <div class="settings-add-category-group">
+            <input
+              type="text"
+              id="settings-new-category-label"
+              maxlength="40"
+              required
+              placeholder="Ví dụ: Giải trí"
+              autocomplete="off"
+            />
+            <div class="select-wrap settings-icon-select-wrap">
+              <select id="settings-new-category-icon-select" aria-label="Chọn biểu tượng"></select>
+            </div>
+          </div>
         </div>
         <button type="submit" class="btn btn-primary btn-block">Thêm danh mục</button>
       </form>
@@ -329,7 +334,7 @@
       </label>
       <div class="field">
         <span class="field-label">Biểu tượng</span>
-        <div id="edit-category-icons" class="icon-picker" role="group" aria-label="Chọn biểu tượng"></div>
+        <div id="edit-category-icons" class="icon-picker"></div>
         <input type="hidden" id="edit-category-icon-id" value="food" />
       </div>
       <div class="modal-actions">
@@ -384,6 +389,16 @@
       <h2 id="edit-expense-title" class="modal-title">Sửa khoản chi</h2>
       <p id="edit-expense-desc" class="modal-desc"></p>
       <label class="field">
+        <span class="field-label">Danh mục</span>
+        <div class="select-wrap">
+          <select id="edit-expense-category" required></select>
+        </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Tên khoản <span class="optional">(không bắt buộc)</span></span>
+        <input type="text" id="edit-expense-name" maxlength="120" autocomplete="off" />
+      </label>
+      <label class="field">
         <span class="field-label">Số tiền (nghìn đồng)</span>
         <div class="amount-input-wrap">
           <span id="edit-expense-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
@@ -392,8 +407,8 @@
       </label>
       <p id="edit-expense-template-note" class="modal-note" hidden>Khoản cố định: lưu sẽ cập nhật mặc định cho tháng mới.</p>
       <div class="modal-actions">
-        <button type="button" id="edit-expense-cancel" class="btn btn-ghost btn-block">Hủy</button>
         <button type="button" id="edit-expense-save" class="btn btn-primary btn-block">Lưu</button>
+        <button type="button" id="edit-expense-cancel" class="btn btn-ghost btn-block">Hủy</button>
       </div>
     </div>
   </div>
