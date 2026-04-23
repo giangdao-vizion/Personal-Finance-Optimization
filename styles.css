@@ -364,6 +364,13 @@ body {
   transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+@media (max-width: 480px) {
+  .side-menu-panel {
+    width: 100vw;
+    border-right: none;
+  }
+}
+
 .side-menu:not([hidden]) .side-menu-panel {
   transform: translateX(0);
 }
@@ -434,7 +441,7 @@ body {
 }
 
 .side-menu-swipe-main {
-  width: 100%;
+  width: calc(100% - 4.2rem);
   flex-shrink: 0;
 }
 
