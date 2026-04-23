@@ -592,24 +592,19 @@
   function allMenuMonthKeys() {
     var set = {};
     var out = [];
-    var d = new Date();
-    var i;
-    for (i = 0; i < MENU_MONTH_SPAN; i++) {
-      var y = d.getFullYear();
-      var mo = d.getMonth() + 1;
-      var k = y + "-" + (mo < 10 ? "0" : "") + mo;
-      if (!set[k]) {
-        set[k] = true;
-        out.push(k);
-      }
-      d.setMonth(d.getMonth() - 1);
-    }
     Object.keys(app.months).forEach(function (k) {
-      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(k) && !set[k]) {
+      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(k) && monthHasData(k) && !set[k]) {
         set[k] = true;
         out.push(k);
       }
     });
+    if (
+      activeMonthKey &&
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(activeMonthKey) &&
+      !set[activeMonthKey]
+    ) {
+      out.push(activeMonthKey);
+    }
     out.sort(function (a, b) {
       return b.localeCompare(a);
     });
@@ -1674,6 +1669,115 @@
     persistAndRender();
   }
 
+  var SIDE_MENU_SWIPE_DELETE_PX = 67;
+
+  function setSideMenuRowOffset(li, px, animate) {
+    if (!li) return;
+    var track = li.querySelector(".side-menu-swipe-track");
+    if (!track) return;
+    var x = Math.max(0, Math.min(SIDE_MENU_SWIPE_DELETE_PX, Math.round(px || 0)));
+    track.style.transition = animate ? "transform 0.2s ease" : "none";
+    track.style.transform = "translateX(" + -x + "px)";
+    li.dataset.swipeOffset = String(x);
+    li.classList.toggle("is-swiped-open", x >= SIDE_MENU_SWIPE_DELETE_PX);
+  }
+
+  function closeAllSideMenuSwipes(exceptLi) {
+    if (!elSideMenuList) return;
+    var rows = elSideMenuList.querySelectorAll("li.is-swiped-open");
+    var i;
+    for (i = 0; i < rows.length; i++) {
+      if (exceptLi && rows[i] === exceptLi) continue;
+      setSideMenuRowOffset(rows[i], 0, true);
+    }
+  }
+
+  function deleteMonthDataByKey(key) {
+    if (!key || !app.months[key]) return;
+    if (!confirm("Xóa toàn bộ dữ liệu tháng này? Hành động này không thể hoàn tác.")) {
+      return;
+    }
+    delete app.months[key];
+    if (activeMonthKey === key) {
+      openMonth(currentMonthKey(), { skipUrl: true });
+      saveAppData();
+    } else {
+      saveAppData();
+      renderSideMenuList();
+    }
+  }
+
+  function attachSideMenuSwipe(li, track, btnMain, monthKey) {
+    if (!li || !track || !btnMain) return;
+    var startX = 0;
+    var startY = 0;
+    var baseOffset = 0;
+    var dragging = false;
+    var touchId = null;
+
+    btnMain.addEventListener("click", function (ev) {
+      if ((parseInt(li.dataset.swipeOffset || "0", 10) || 0) > 0) {
+        ev.preventDefault();
+        setSideMenuRowOffset(li, 0, true);
+        return;
+      }
+      closeSideMenu(true);
+      openMonth(monthKey);
+    });
+
+    btnMain.addEventListener(
+      "touchstart",
+      function (ev) {
+        if (!ev.changedTouches || !ev.changedTouches.length) return;
+        closeAllSideMenuSwipes(li);
+        var t = ev.changedTouches[0];
+        touchId = t.identifier;
+        startX = t.clientX;
+        startY = t.clientY;
+        baseOffset = parseInt(li.dataset.swipeOffset || "0", 10) || 0;
+        dragging = true;
+      },
+      { passive: true }
+    );
+
+    btnMain.addEventListener(
+      "touchmove",
+      function (ev) {
+        if (!dragging || touchId == null || !ev.changedTouches) return;
+        var i;
+        var t = null;
+        for (i = 0; i < ev.changedTouches.length; i++) {
+          if (ev.changedTouches[i].identifier === touchId) {
+            t = ev.changedTouches[i];
+            break;
+          }
+        }
+        if (!t) return;
+        var dx = t.clientX - startX;
+        var dy = t.clientY - startY;
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 6) {
+          dragging = false;
+          return;
+        }
+        var offset = baseOffset - dx;
+        setSideMenuRowOffset(li, offset, false);
+      },
+      { passive: true }
+    );
+
+    function finishTouch() {
+      if (!li) return;
+      var offset = parseInt(li.dataset.swipeOffset || "0", 10) || 0;
+      var shouldOpen = offset >= SIDE_MENU_SWIPE_DELETE_PX * 0.45;
+      setSideMenuRowOffset(li, shouldOpen ? SIDE_MENU_SWIPE_DELETE_PX : 0, true);
+      dragging = false;
+      touchId = null;
+    }
+
+    btnMain.addEventListener("touchend", finishTouch, { passive: true });
+    btnMain.addEventListener("touchcancel", finishTouch, { passive: true });
+  }
+
   function renderSideMenuList() {
     if (!elSideMenuList) return;
     elSideMenuList.innerHTML = "";
@@ -1685,10 +1789,13 @@
       var bal = inc - spent;
 
       var li = document.createElement("li");
+      var track = document.createElement("div");
+      track.className = "side-menu-swipe-track";
+
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className =
-        "side-menu-item" + (k === activeMonthKey ? " is-active" : "");
+        "side-menu-item side-menu-swipe-main" + (k === activeMonthKey ? " is-active" : "");
 
       var cal = document.createElement("span");
       cal.className = "side-menu-item-ico";
@@ -1739,12 +1846,21 @@
       btn.appendChild(cal);
       btn.appendChild(txt);
       btn.appendChild(arr);
-      btn.addEventListener("click", function () {
-        closeSideMenu(true);
-        openMonth(k);
+
+      var btnDelete = document.createElement("button");
+      btnDelete.type = "button";
+      btnDelete.className = "side-menu-item-delete";
+      btnDelete.textContent = "Xóa";
+      btnDelete.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        deleteMonthDataByKey(k);
       });
 
-      li.appendChild(btn);
+      track.appendChild(btn);
+      track.appendChild(btnDelete);
+      li.appendChild(track);
+      setSideMenuRowOffset(li, 0, false);
+      attachSideMenuSwipe(li, track, btn, k);
       elSideMenuList.appendChild(li);
     });
   }

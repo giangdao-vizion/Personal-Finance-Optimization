@@ -415,10 +415,44 @@ body {
 
 .side-menu-list li {
   margin-bottom: 0.35rem;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
 }
 
 .side-menu-list li:last-child {
   margin-bottom: 0;
+}
+
+.side-menu-swipe-track {
+  display: flex;
+  align-items: stretch;
+  width: calc(100% + 4.2rem);
+  transform: translateX(0);
+  transition: transform 0.2s ease;
+  will-change: transform;
+}
+
+.side-menu-swipe-main {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.side-menu-item-delete {
+  width: 4.2rem;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 0;
+  background: rgba(224, 112, 112, 0.2);
+  color: var(--danger);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.side-menu-item-delete:active {
+  background: rgba(224, 112, 112, 0.28);
 }
 
 .side-menu-item {
@@ -436,7 +470,7 @@ body {
   text-align: left;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
-  touch-action: manipulation;
+  touch-action: pan-y;
 }
 
 .side-menu-item:hover {
@@ -501,10 +535,18 @@ body {
   margin-top: 1rem;
   padding-top: 1rem;
   border-top: 1px solid var(--border);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .side-menu-footer .side-menu-jump {
   margin-bottom: 0.65rem;
+  min-width: 0;
+}
+
+.side-menu-footer .side-menu-jump .input-month {
+  min-width: 0;
+  max-width: 100%;
 }
 
 body.side-menu-open,
