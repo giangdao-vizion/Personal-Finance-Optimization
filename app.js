@@ -4,6 +4,13 @@
   var STORAGE_V1 = "family-budget-v1";
   var STORAGE_V2 = "family-budget-v2";
   var MENU_MONTH_SPAN = 60;
+  var SUPABASE_URL =
+    window.SUPABASE_URL || "https://sfngotvwotmlqelkjzpr.supabase.co";
+  var SUPABASE_PUBLISHABLE_KEY =
+    window.SUPABASE_PUBLISHABLE_KEY ||
+    "sb_publishable_e6LA2cOnFrWPLXn_Oc1pdw_hHFAWPLx";
+  var SUPABASE_TABLE = "family_budget_states";
+  var SUPABASE_STATE_ID = "shared-default";
 
   /** Các biểu tượng có sẵn khi tạo / sửa danh mục */
   var ICON_PRESETS = [
@@ -345,33 +352,54 @@
     return out;
   }
 
+  function normalizeAppDataShape(d) {
+    var src = d && typeof d === "object" ? d : {};
+    var months = src.months && typeof src.months === "object" ? src.months : {};
+    var fixedTemplates;
+    if (Array.isArray(src.fixedTemplates)) {
+      fixedTemplates = src.fixedTemplates.map(normalizeFixedTemplateRow);
+    } else if (src.fixedTemplates === undefined) {
+      fixedTemplates = defaultFixedTemplates();
+    } else {
+      fixedTemplates = [];
+    }
+    var settings = normalizeSettings(src.settings);
+    var categories;
+    if (Array.isArray(src.categories) && src.categories.length > 0) {
+      categories = src.categories;
+    } else {
+      categories = defaultCategories();
+    }
+    return {
+      months: months,
+      fixedTemplates: fixedTemplates,
+      settings: settings,
+      categories: categories,
+    };
+  }
+
+  function normalizeFixedTemplateRow(t) {
+    var row = t && typeof t === "object" ? t : {};
+    var cat = typeof row.category === "string" ? row.category : "cat-an-uong";
+    var out = {
+      id: row.id || "ft-" + uid(),
+      category: cat,
+      name: typeof row.name === "string" ? row.name.trim() : "",
+      amount:
+        typeof row.amount === "number" && row.amount >= 0 ? Math.round(row.amount) : 0,
+      updatedAt: fixedTemplateUpdatedAt(row) || nowTs(),
+    };
+    if (typeof row.deletedAt === "number" && row.deletedAt > 0) {
+      out.deletedAt = Math.round(row.deletedAt);
+    }
+    return out;
+  }
+
   function loadAppData() {
     try {
       var raw = localStorage.getItem(STORAGE_V2);
       if (raw) {
-        var d = JSON.parse(raw);
-        var months = d.months && typeof d.months === "object" ? d.months : {};
-        var fixedTemplates;
-        if (Array.isArray(d.fixedTemplates)) {
-          fixedTemplates = d.fixedTemplates;
-        } else if (d.fixedTemplates === undefined) {
-          fixedTemplates = defaultFixedTemplates();
-        } else {
-          fixedTemplates = [];
-        }
-        var settings = normalizeSettings(d.settings);
-        var categories;
-        if (Array.isArray(d.categories) && d.categories.length > 0) {
-          categories = d.categories;
-        } else {
-          categories = defaultCategories();
-        }
-        return {
-          months: months,
-          fixedTemplates: fixedTemplates,
-          settings: settings,
-          categories: categories,
-        };
+        return normalizeAppDataShape(JSON.parse(raw));
       }
     } catch (e) {}
     var months = {};
@@ -399,26 +427,206 @@
         } catch (e3) {}
       }
     } catch (e2) {}
-    return {
+    return normalizeAppDataShape({
       months: months,
       fixedTemplates: defaultFixedTemplates(),
       settings: defaultSettings(),
       categories: defaultCategories(),
+    });
+  }
+
+  var supabaseClient = null;
+  var supabaseChannel = null;
+  var supabaseEnabled = false;
+  var supabaseUserEmail = "";
+  var supabaseInitialMonthKey = "";
+  var lastSyncedPayload = "";
+  var isApplyingCloudSnapshot = false;
+  var cloudSyncTimer = null;
+
+  function nowTs() {
+    return Date.now();
+  }
+
+  function expenseUpdatedAt(e) {
+    if (!e || typeof e !== "object") return 0;
+    var v = typeof e.updatedAt === "number" ? e.updatedAt : 0;
+    if (v > 0) return v;
+    return expenseCreatedAt(e);
+  }
+
+  function fixedTemplateUpdatedAt(t) {
+    if (!t || typeof t !== "object") return 0;
+    var v = typeof t.updatedAt === "number" ? t.updatedAt : 0;
+    if (v > 0) return v;
+    var id = typeof t.id === "string" ? t.id : "";
+    var m = /^ft-e-([0-9a-z]+)-/.exec(id) || /^ft-([0-9a-z]+)-/.exec(id);
+    if (!m) return 0;
+    var n = parseInt(m[1], 36);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function isRowDeleted(row) {
+    return !!(row && typeof row.deletedAt === "number" && row.deletedAt > 0);
+  }
+
+  function isMonthDeleted(m) {
+    return !!(m && typeof m.deletedAt === "number" && m.deletedAt > 0);
+  }
+
+  function getAppPayload() {
+    return {
+      months: app.months,
+      fixedTemplates: app.fixedTemplates,
+      settings: app.settings,
+      categories: app.categories,
     };
   }
 
-  function saveAppData() {
+  function mergeRowsById(remoteRows, localRows, getId, getUpdated) {
+    var map = {};
+    var out = [];
+    function put(row) {
+      if (!row || typeof row !== "object") return;
+      var id = getId(row);
+      if (!id) return;
+      var prev = map[id];
+      if (!prev) {
+        map[id] = row;
+        out.push(row);
+        return;
+      }
+      if (getUpdated(row) >= getUpdated(prev)) {
+        map[id] = row;
+        var idx = out.indexOf(prev);
+        if (idx >= 0) out[idx] = row;
+      }
+    }
+    (Array.isArray(remoteRows) ? remoteRows : []).forEach(put);
+    (Array.isArray(localRows) ? localRows : []).forEach(put);
+    return out;
+  }
+
+  function mergePayloadForCloud(remotePayload, localPayload) {
+    var remote = normalizeAppDataShape(remotePayload || {});
+    var local = normalizeAppDataShape(localPayload || {});
+    var merged = {
+      months: {},
+      fixedTemplates: mergeRowsById(
+        remote.fixedTemplates,
+        local.fixedTemplates,
+        function (t) {
+          return t && t.id;
+        },
+        fixedTemplateUpdatedAt
+      ),
+      settings: local.settings,
+      categories: local.categories,
+    };
+    var monthKeys = {};
+    Object.keys(remote.months || {}).forEach(function (k) {
+      monthKeys[k] = true;
+    });
+    Object.keys(local.months || {}).forEach(function (k) {
+      monthKeys[k] = true;
+    });
+    Object.keys(monthKeys).forEach(function (k) {
+      var rm = remote.months[k] || {};
+      var lm = local.months[k] || {};
+      var rmDeletedAt = typeof rm.deletedAt === "number" ? rm.deletedAt : 0;
+      var lmDeletedAt = typeof lm.deletedAt === "number" ? lm.deletedAt : 0;
+      if (rmDeletedAt > 0 || lmDeletedAt > 0) {
+        if (rmDeletedAt >= lmDeletedAt) {
+          merged.months[k] = { deletedAt: rmDeletedAt };
+        } else {
+          merged.months[k] = { deletedAt: lmDeletedAt };
+        }
+        return;
+      }
+      merged.months[k] = {
+        income:
+          typeof lm.income === "number"
+            ? lm.income
+            : typeof rm.income === "number"
+            ? rm.income
+            : 0,
+        incomeUserSet:
+          lm.incomeUserSet !== undefined
+            ? !!lm.incomeUserSet
+            : rm.incomeUserSet !== undefined
+            ? !!rm.incomeUserSet
+            : false,
+        expenses: mergeRowsById(
+          rm.expenses || [],
+          lm.expenses || [],
+          function (e) {
+            return e && e.id;
+          },
+          expenseUpdatedAt
+        ).map(normalizeExpenseRow),
+      };
+    });
+    return merged;
+  }
+
+  function saveAppDataToLocal() {
     try {
-      localStorage.setItem(
-        STORAGE_V2,
-        JSON.stringify({
-          months: app.months,
-          fixedTemplates: app.fixedTemplates,
-          settings: app.settings,
-          categories: app.categories,
-        })
-      );
+      localStorage.setItem(STORAGE_V2, JSON.stringify(getAppPayload()));
     } catch (e) {}
+  }
+
+  async function syncToSupabaseNow() {
+    if (!supabaseEnabled || !supabaseClient || isApplyingCloudSnapshot) return;
+    var payload = getAppPayload();
+    var payloadJson = "";
+    try {
+      payloadJson = JSON.stringify(payload);
+    } catch (e) {
+      return;
+    }
+    if (payloadJson === lastSyncedPayload) return;
+    var mergedPayload = payload;
+    try {
+      var remoteRes = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select("payload")
+        .eq("id", SUPABASE_STATE_ID)
+        .maybeSingle();
+      if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
+        mergedPayload = mergePayloadForCloud(remoteRes.data.payload, payload);
+      }
+    } catch (eRemote) {}
+    var res = await supabaseClient.from(SUPABASE_TABLE).upsert(
+      {
+        id: SUPABASE_STATE_ID,
+        payload: mergedPayload,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+    if (!res.error) {
+      try {
+        lastSyncedPayload = JSON.stringify(mergedPayload);
+      } catch (e2) {
+        lastSyncedPayload = payloadJson;
+      }
+    } else {
+      console.warn("Supabase sync failed:", res.error.message);
+    }
+  }
+
+  function queueSupabaseSync() {
+    if (!supabaseEnabled || isApplyingCloudSnapshot) return;
+    if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+    cloudSyncTimer = setTimeout(function () {
+      cloudSyncTimer = null;
+      syncToSupabaseNow();
+    }, 350);
+  }
+
+  function saveAppData() {
+    saveAppDataToLocal();
+    queueSupabaseSync();
   }
 
   var app = loadAppData();
@@ -477,10 +685,12 @@
       var m = app.months[k];
       if (!m || !Array.isArray(m.expenses)) return;
       m.expenses.forEach(function (e) {
+        if (isRowDeleted(e)) return;
         add(e.category);
       });
     });
     (app.fixedTemplates || []).forEach(function (t) {
+      if (isRowDeleted(t)) return;
       add(t.category);
     });
     return Object.keys(set);
@@ -510,6 +720,162 @@
   }
 
   ensureAppCategories();
+
+  function normalizeAllFixedTemplates() {
+    if (!Array.isArray(app.fixedTemplates)) {
+      app.fixedTemplates = defaultFixedTemplates();
+      return;
+    }
+    app.fixedTemplates = app.fixedTemplates.map(function (t) {
+      var row = normalizeFixedTemplateRow(t);
+      if (!categoryIdExists(row.category)) row.category = getFirstCategoryId();
+      return row;
+    });
+  }
+
+  normalizeAllFixedTemplates();
+
+  function applyNormalizedAppData(nextData) {
+    app.months = nextData.months;
+    app.fixedTemplates = nextData.fixedTemplates;
+    app.settings = normalizeSettings(nextData.settings);
+    app.categories = nextData.categories;
+    migrateAllMonthsIncomeUserSet();
+    ensureAppCategories();
+    normalizeAllFixedTemplates();
+  }
+
+  async function pullSupabaseStateAndRender() {
+    if (!supabaseClient || !supabaseEnabled) return;
+    try {
+      var fetchRes = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select("payload")
+        .eq("id", SUPABASE_STATE_ID)
+        .maybeSingle();
+      if (fetchRes.error) {
+        console.warn("Supabase load failed:", fetchRes.error.message);
+        return;
+      }
+      if (fetchRes.data && fetchRes.data.payload) {
+        isApplyingCloudSnapshot = true;
+        try {
+          applyNormalizedAppData(normalizeAppDataShape(fetchRes.data.payload));
+          saveAppDataToLocal();
+          applyThemeSettings();
+          refreshAllCategorySelects();
+          openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
+            skipUrl: true,
+          });
+          lastSyncedPayload = JSON.stringify(getAppPayload());
+        } finally {
+          isApplyingCloudSnapshot = false;
+        }
+      } else {
+        queueSupabaseSync();
+      }
+    } catch (e) {
+      console.warn("Supabase load exception:", e);
+    }
+  }
+
+  function detachSupabaseChannel() {
+    if (!supabaseClient || !supabaseChannel) return;
+    supabaseClient.removeChannel(supabaseChannel);
+    supabaseChannel = null;
+  }
+
+  function attachSupabaseRealtime() {
+    if (!supabaseClient || !supabaseEnabled) return;
+    detachSupabaseChannel();
+    supabaseChannel = supabaseClient
+      .channel("family-budget-sync")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: SUPABASE_TABLE,
+          filter: "id=eq." + SUPABASE_STATE_ID,
+        },
+        function (payload) {
+          if (!payload || !payload.new || !payload.new.payload) return;
+          var cloudData = normalizeAppDataShape(payload.new.payload);
+          var cloudJson;
+          try {
+            cloudJson = JSON.stringify(cloudData);
+          } catch (e) {
+            return;
+          }
+          if (cloudJson === lastSyncedPayload) return;
+          isApplyingCloudSnapshot = true;
+          try {
+            applyNormalizedAppData(cloudData);
+            saveAppDataToLocal();
+            applyThemeSettings();
+            refreshAllCategorySelects();
+            openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
+              skipUrl: true,
+            });
+            lastSyncedPayload = cloudJson;
+          } finally {
+            isApplyingCloudSnapshot = false;
+          }
+        }
+      )
+      .subscribe();
+  }
+
+  async function enableSupabaseSyncBySession(session) {
+    if (!session || !session.user) return;
+    supabaseEnabled = true;
+    supabaseUserEmail = session.user.email || "";
+    await pullSupabaseStateAndRender();
+    attachSupabaseRealtime();
+    renderAuthUi();
+  }
+
+  async function disableSupabaseSync() {
+    supabaseEnabled = false;
+    supabaseUserEmail = "";
+    lastSyncedPayload = "";
+    if (cloudSyncTimer) {
+      clearTimeout(cloudSyncTimer);
+      cloudSyncTimer = null;
+    }
+    detachSupabaseChannel();
+    renderAuthUi();
+  }
+
+  async function initSupabaseSync(initialMonthKey) {
+    supabaseInitialMonthKey = initialMonthKey || currentMonthKey();
+    if (
+      !SUPABASE_URL ||
+      !SUPABASE_PUBLISHABLE_KEY ||
+      !window.supabase ||
+      !window.supabase.createClient
+    ) {
+      return;
+    }
+    try {
+      supabaseClient = window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_PUBLISHABLE_KEY
+      );
+    } catch (e) {
+      console.warn("Supabase init failed:", e);
+      return;
+    }
+
+    try {
+      var auth = await supabaseClient.auth.getSession();
+      if (auth && auth.data && auth.data.session) {
+        await enableSupabaseSyncBySession(auth.data.session);
+      }
+    } catch (e2) {
+      console.warn("Supabase session load failed:", e2);
+    }
+  }
 
   function findCategory(id) {
     var i;
@@ -576,6 +942,12 @@
         incomeUserSet: false,
       };
     }
+    if (isMonthDeleted(app.months[k])) {
+      app.months[k].deletedAt = 0;
+      app.months[k].income = 0;
+      app.months[k].expenses = [];
+      app.months[k].incomeUserSet = false;
+    }
     if (!Array.isArray(app.months[k].expenses)) app.months[k].expenses = [];
     if (typeof app.months[k].income !== "number") app.months[k].income = 0;
     migrateMonthIncomeUserSet(app.months[k]);
@@ -585,6 +957,7 @@
   function totalExpensesForMonth(m) {
     if (!m || !m.expenses) return 0;
     return m.expenses.reduce(function (s, e) {
+      if (isRowDeleted(e)) return s;
       return s + (typeof e.amount === "number" ? e.amount : 0);
     }, 0);
   }
@@ -592,8 +965,15 @@
   function monthHasData(k) {
     var m = app.months[k];
     if (!m) return false;
+    if (isMonthDeleted(m)) return false;
     if ((m.income || 0) > 0) return true;
-    if (m.expenses && m.expenses.length > 0) return true;
+    if (
+      m.expenses &&
+      m.expenses.some(function (e) {
+        return !isRowDeleted(e);
+      })
+    )
+      return true;
     return false;
   }
 
@@ -716,6 +1096,8 @@
   var elBtnCloseMenu = document.getElementById("btn-close-menu");
   var elMenuJumpMonth = document.getElementById("menu-jump-month");
   var elMenuJumpBtn = document.getElementById("menu-jump-btn");
+  var elAuthStatusText = document.getElementById("auth-status-text");
+  var elBtnAuthToggle = document.getElementById("btn-auth-toggle");
 
   var elViewMonth = document.getElementById("view-month");
   var elViewSettings = document.getElementById("view-settings");
@@ -765,7 +1147,68 @@
   var elEditTemplateNote = document.getElementById("edit-expense-template-note");
   var elEditSave = document.getElementById("edit-expense-save");
   var elEditCancel = document.getElementById("edit-expense-cancel");
+  var elAuthDialog = document.getElementById("auth-dialog");
+  var elAuthBackdrop = document.getElementById("auth-backdrop");
+  var elAuthEmail = document.getElementById("auth-email");
+  var elAuthPassword = document.getElementById("auth-password");
+  var elAuthError = document.getElementById("auth-error");
+  var elAuthSubmit = document.getElementById("auth-submit");
+  var elAuthCancel = document.getElementById("auth-cancel");
   var reportMode = "pie";
+
+  function renderAuthUi() {
+    if (elAuthStatusText) {
+      if (supabaseEnabled) {
+        var emailMask = supabaseUserEmail || "đã đăng nhập";
+        elAuthStatusText.textContent = "Đang đồng bộ cloud: " + emailMask;
+      } else {
+        elAuthStatusText.textContent = "Đang dùng local trên thiết bị này.";
+      }
+    }
+    if (elBtnAuthToggle) {
+      elBtnAuthToggle.textContent = supabaseEnabled ? "Đăng xuất cloud sync" : "Đăng nhập để đồng bộ";
+    }
+  }
+
+  function setAuthError(message) {
+    if (!elAuthError) return;
+    if (!message) {
+      elAuthError.textContent = "";
+      elAuthError.hidden = true;
+      elAuthError.classList.remove("is-error");
+      return;
+    }
+    elAuthError.textContent = message;
+    elAuthError.hidden = false;
+    elAuthError.classList.add("is-error");
+  }
+
+  function openAuthDialog() {
+    if (!elAuthDialog) return;
+    setAuthError("");
+    if (elAuthPassword) elAuthPassword.value = "";
+    if (elAuthEmail && !elAuthEmail.value && supabaseUserEmail) elAuthEmail.value = supabaseUserEmail;
+    elAuthDialog.hidden = false;
+    elAuthDialog.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    setTimeout(function () {
+      if (elAuthEmail) elAuthEmail.focus();
+    }, 0);
+  }
+
+  function closeAuthDialog() {
+    if (!elAuthDialog) return;
+    elAuthDialog.hidden = true;
+    elAuthDialog.setAttribute("aria-hidden", "true");
+    setAuthError("");
+    if (
+      (!elEditDialog || elEditDialog.hidden) &&
+      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
+      (!elEditCategoryDialog || elEditCategoryDialog.hidden)
+    ) {
+      document.body.classList.remove("modal-open");
+    }
+  }
 
   function fillCategorySelect(el) {
     if (!el) return;
@@ -921,7 +1364,8 @@
     }
     if (
       (!elEditDialog || elEditDialog.hidden) &&
-      (!elEditFixedDialog || elEditFixedDialog.hidden)
+      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
+      (!elAuthDialog || elAuthDialog.hidden)
     ) {
       document.body.classList.remove("modal-open");
     }
@@ -1005,22 +1449,30 @@
     var cat = row.category;
     if (cat === "con-cai") cat = "con-nhim";
     if (!categoryIdExists(cat)) cat = getFirstCategoryId();
+    var updatedAt =
+      typeof row.updatedAt === "number" && row.updatedAt > 0
+        ? Math.round(row.updatedAt)
+        : expenseCreatedAt(row) || nowTs();
     var o = {
       id: row.id || uid(),
       category: cat,
       name: typeof row.name === "string" ? row.name.trim() : "",
       amount: typeof row.amount === "number" && row.amount >= 0 ? Math.round(row.amount) : 0,
+      updatedAt: updatedAt,
     };
     if (row.templateId) o.templateId = row.templateId;
+    if (typeof row.deletedAt === "number" && row.deletedAt > 0) {
+      o.deletedAt = Math.round(row.deletedAt);
+    }
     return o;
   }
 
   function syncFixedIntoMonth(m) {
     if (!Array.isArray(app.fixedTemplates)) return;
     app.fixedTemplates.forEach(function (t) {
-      if (!t || !t.id || !categoryIdExists(t.category)) return;
+      if (!t || !t.id || !categoryIdExists(t.category) || isRowDeleted(t)) return;
       var exists = m.expenses.some(function (e) {
-        return e.templateId === t.id;
+        return e.templateId === t.id && !isRowDeleted(e);
       });
       if (!exists) {
         m.expenses.push({
@@ -1032,6 +1484,7 @@
             typeof t.amount === "number" && t.amount >= 0
               ? Math.round(t.amount)
               : 0,
+          updatedAt: nowTs(),
         });
       }
     });
@@ -1041,7 +1494,9 @@
     if (!templateId || !app.fixedTemplates) return null;
     var i;
     for (i = 0; i < app.fixedTemplates.length; i++) {
-      if (app.fixedTemplates[i].id === templateId) return app.fixedTemplates[i];
+      if (app.fixedTemplates[i].id === templateId && !isRowDeleted(app.fixedTemplates[i])) {
+        return app.fixedTemplates[i];
+      }
     }
     return null;
   }
@@ -1052,6 +1507,7 @@
       var m = app.months[k];
       if (!m || !Array.isArray(m.expenses)) return;
       m.expenses.forEach(function (e) {
+        if (isRowDeleted(e)) return;
         if (e.templateId === t.id) {
           e.category = t.category;
           e.name = typeof t.name === "string" ? t.name.trim() : "";
@@ -1059,6 +1515,7 @@
             typeof t.amount === "number" && t.amount >= 0
               ? Math.round(t.amount)
               : 0;
+          e.updatedAt = nowTs();
         }
       });
     });
@@ -1067,6 +1524,7 @@
   function totalExpenses() {
     if (!state) return 0;
     return state.expenses.reduce(function (s, e) {
+      if (isRowDeleted(e)) return s;
       return s + e.amount;
     }, 0);
   }
@@ -1078,6 +1536,7 @@
     });
     if (!state) return map;
     state.expenses.forEach(function (e) {
+      if (isRowDeleted(e)) return;
       if (map[e.category] == null) map[e.category] = 0;
       map[e.category] += e.amount;
     });
@@ -1381,9 +1840,10 @@
   }
 
   function removeFixedTemplateById(templateId) {
-    app.fixedTemplates = app.fixedTemplates.filter(function (x) {
-      return x.id !== templateId;
-    });
+    var t = findFixedTemplate(templateId);
+    if (!t) return;
+    t.deletedAt = nowTs();
+    t.updatedAt = nowTs();
     saveAppData();
     renderFixedTemplatesList();
   }
@@ -1391,7 +1851,12 @@
   function renderFixedTemplatesInto(ul, showEdit) {
     if (!ul) return;
     ul.innerHTML = "";
-    if (!Array.isArray(app.fixedTemplates) || !app.fixedTemplates.length) {
+    var visibleTemplates = Array.isArray(app.fixedTemplates)
+      ? app.fixedTemplates.filter(function (t) {
+          return !isRowDeleted(t);
+        })
+      : [];
+    if (!visibleTemplates.length) {
       var empty = document.createElement("li");
       empty.className = "fixed-template-row";
       empty.textContent = showEdit
@@ -1402,7 +1867,7 @@
       ul.appendChild(empty);
       return;
     }
-    app.fixedTemplates.forEach(function (t) {
+    visibleTemplates.forEach(function (t) {
       var li = document.createElement("li");
       li.className = "fixed-template-row";
 
@@ -1581,6 +2046,7 @@
   function getVisibleExpenses() {
     if (!state || !Array.isArray(state.expenses)) return [];
     var rows = state.expenses.filter(function (e) {
+      if (isRowDeleted(e)) return false;
       if (expenseListFilter === "fixed") return isFixedExpenseRow(e);
       if (expenseListFilter === "flex") return !isFixedExpenseRow(e);
       return true;
@@ -1677,9 +2143,12 @@
 
   function removeExpense(id) {
     if (!state) return;
-    state.expenses = state.expenses.filter(function (e) {
-      return e.id !== id;
+    var e = state.expenses.find(function (x) {
+      return x.id === id;
     });
+    if (!e) return;
+    e.deletedAt = nowTs();
+    e.updatedAt = nowTs();
     persistAndRender();
   }
 
@@ -1712,7 +2181,12 @@
     if (!confirm("Xóa toàn bộ dữ liệu tháng này? Hành động này không thể hoàn tác.")) {
       return;
     }
-    delete app.months[key];
+    app.months[key] = {
+      deletedAt: nowTs(),
+      income: 0,
+      expenses: [],
+      incomeUserSet: false,
+    };
     if (activeMonthKey === key) {
       openMonth(currentMonthKey(), { skipUrl: true });
       saveAppData();
@@ -2085,6 +2559,7 @@
     closeEditFixedTemplateDialog();
     closeEditExpenseDialog();
     closeEditCategoryDialog();
+    closeAuthDialog();
     var key = readThangFromUrl();
     if (!key) {
       key = currentMonthKey();
@@ -2119,6 +2594,7 @@
         category: cat,
         name: nameTrim,
         amount: amount,
+        updatedAt: nowTs(),
       });
     }
     var row = {
@@ -2126,6 +2602,7 @@
       category: cat,
       name: nameTrim,
       amount: amount,
+      updatedAt: nowTs(),
     };
     if (templateId) row.templateId = templateId;
     state.expenses.push(row);
@@ -2273,6 +2750,7 @@
       category: cat,
       name: elSettingsAddFixedName.value.trim(),
       amount: amount,
+      updatedAt: nowTs(),
     });
     elSettingsAddFixedName.value = "";
     elSettingsAddFixedAmount.value = "";
@@ -2334,7 +2812,11 @@
       elEditDialog.hidden = true;
       elEditDialog.setAttribute("aria-hidden", "true");
     }
-    if ((!elEditFixedDialog || elEditFixedDialog.hidden) && (!elEditCategoryDialog || elEditCategoryDialog.hidden)) {
+    if (
+      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
+      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
+      (!elAuthDialog || elAuthDialog.hidden)
+    ) {
       document.body.classList.remove("modal-open");
     }
   }
@@ -2345,7 +2827,11 @@
       elEditFixedDialog.hidden = true;
       elEditFixedDialog.setAttribute("aria-hidden", "true");
     }
-    if ((!elEditDialog || elEditDialog.hidden) && (!elEditCategoryDialog || elEditCategoryDialog.hidden)) {
+    if (
+      (!elEditDialog || elEditDialog.hidden) &&
+      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
+      (!elAuthDialog || elAuthDialog.hidden)
+    ) {
       document.body.classList.remove("modal-open");
     }
   }
@@ -2386,6 +2872,7 @@
     t.category = cat;
     t.name = elEditFixedName.value.trim();
     t.amount = amount;
+    t.updatedAt = nowTs();
     syncExpenseRowsFromTemplate(t);
     saveAppData();
     closeEditFixedTemplateDialog();
@@ -2413,12 +2900,14 @@
     e.category = cat;
     e.name = nameTrim;
     e.amount = amount;
+    e.updatedAt = nowTs();
     if (e.templateId) {
       var t = findFixedTemplate(e.templateId);
       if (t) {
         t.category = cat;
         t.name = nameTrim;
         t.amount = amount;
+        t.updatedAt = nowTs();
       }
     }
     closeEditExpenseDialog();
@@ -2484,6 +2973,55 @@
     openMonth(v);
   });
 
+  async function handleAuthSubmit() {
+    if (!supabaseClient) {
+      setAuthError("Supabase chưa sẵn sàng.");
+      return;
+    }
+    var email = elAuthEmail ? elAuthEmail.value.trim() : "";
+    var password = elAuthPassword ? elAuthPassword.value : "";
+    if (!email || !password) {
+      setAuthError("Vui lòng nhập email và mật khẩu.");
+      return;
+    }
+    setAuthError("");
+    if (elAuthSubmit) {
+      elAuthSubmit.disabled = true;
+      elAuthSubmit.textContent = "Đang đăng nhập...";
+    }
+    try {
+      var res = await supabaseClient.auth.signInWithPassword({
+        email: email,
+        password: password,
+      });
+      if (res.error) {
+        setAuthError(res.error.message || "Đăng nhập thất bại.");
+        return;
+      }
+      await enableSupabaseSyncBySession(res.data ? res.data.session : null);
+      closeAuthDialog();
+    } catch (e) {
+      setAuthError("Không thể đăng nhập lúc này.");
+    } finally {
+      if (elAuthSubmit) {
+        elAuthSubmit.disabled = false;
+        elAuthSubmit.textContent = "Đăng nhập";
+      }
+    }
+  }
+
+  async function handleAuthToggle() {
+    if (!supabaseClient) return;
+    if (supabaseEnabled) {
+      try {
+        await supabaseClient.auth.signOut();
+      } catch (e) {}
+      await disableSupabaseSync();
+      return;
+    }
+    openAuthDialog();
+  }
+
   elEditSave.addEventListener("click", saveEditExpenseDialog);
   elEditCancel.addEventListener("click", closeEditExpenseDialog);
   elEditBackdrop.addEventListener("click", closeEditExpenseDialog);
@@ -2493,6 +3031,27 @@
       saveEditExpenseDialog();
     }
   });
+
+  if (elBtnAuthToggle) {
+    elBtnAuthToggle.addEventListener("click", handleAuthToggle);
+  }
+  if (elAuthSubmit) {
+    elAuthSubmit.addEventListener("click", handleAuthSubmit);
+  }
+  if (elAuthCancel) {
+    elAuthCancel.addEventListener("click", closeAuthDialog);
+  }
+  if (elAuthBackdrop) {
+    elAuthBackdrop.addEventListener("click", closeAuthDialog);
+  }
+  if (elAuthPassword) {
+    elAuthPassword.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        handleAuthSubmit();
+      }
+    });
+  }
 
   fillCategorySelect(elCategory);
   fillCategorySelect(elSettingsAddFixedCategory);
@@ -2518,5 +3077,7 @@
     } catch (e4) {}
   }
 
+  renderAuthUi();
   openMonth(initialKey, { skipUrl: true });
+  initSupabaseSync(initialKey);
 })();

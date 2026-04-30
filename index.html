@@ -384,6 +384,10 @@
             <input type="month" id="menu-jump-month" class="input-month" />
           </label>
           <button type="button" id="menu-jump-btn" class="btn btn-primary btn-block">Mở tháng</button>
+          <div class="side-menu-auth">
+            <p id="auth-status-text" class="side-menu-auth-status">Đang dùng local trên thiết bị này.</p>
+            <button type="button" id="btn-auth-toggle" class="btn btn-ghost btn-block">Đăng nhập để đồng bộ</button>
+          </div>
         </div>
       </div>
     </aside>
@@ -483,6 +487,34 @@
     </div>
   </div>
 
+  <div id="auth-dialog" class="modal" hidden aria-hidden="true">
+    <div class="modal-backdrop" id="auth-backdrop" tabindex="-1"></div>
+    <div
+      class="modal-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-title"
+      aria-describedby="auth-desc"
+    >
+      <h2 id="auth-title" class="modal-title">Đăng nhập đồng bộ</h2>
+      <p id="auth-desc" class="modal-desc">Không có đăng ký trong app này. Chỉ tài khoản bạn đã tạo sẵn mới đăng nhập được.</p>
+      <label class="field">
+        <span class="field-label">Email</span>
+        <input type="email" id="auth-email" autocomplete="username" />
+      </label>
+      <label class="field">
+        <span class="field-label">Mật khẩu</span>
+        <input type="password" id="auth-password" autocomplete="current-password" />
+      </label>
+      <p id="auth-error" class="modal-note" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="auth-submit" class="btn btn-primary btn-block">Đăng nhập</button>
+        <button type="button" id="auth-cancel" class="btn btn-ghost btn-block">Hủy</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>

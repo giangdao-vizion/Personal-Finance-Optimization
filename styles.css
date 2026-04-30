@@ -577,6 +577,26 @@ body {
   max-width: 100%;
 }
 
+.side-menu-auth {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.side-menu-auth-status {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+#auth-error.is-error {
+  color: var(--danger);
+  border-left-color: rgba(224, 112, 112, 0.45);
+  background: rgba(224, 112, 112, 0.1);
+}
+
 body.side-menu-open,
 body.modal-open {
   overflow: hidden;
