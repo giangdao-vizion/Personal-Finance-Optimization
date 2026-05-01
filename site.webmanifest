@@ -1,6 +1,6 @@
 {
-  "name": "Kế hoạch chi tiêu gia đình",
-  "short_name": "Chi tiêu",
+  "name": "Chi Tiêu Tracker",
+  "short_name": "Chi Tiêu Tracker",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#0c1014",
