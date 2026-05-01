@@ -1287,6 +1287,8 @@ details.collapsible-card > .collapsible-summary:focus-visible {
 }
 
 input[type="text"],
+input[type="email"],
+input[type="password"],
 select {
   width: 100%;
   min-height: var(--tap-min);
@@ -1300,7 +1302,9 @@ select {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-input[type="text"]::placeholder {
+input[type="text"]::placeholder,
+input[type="email"]::placeholder,
+input[type="password"]::placeholder {
   color: var(--muted2);
   opacity: 1;
 }
