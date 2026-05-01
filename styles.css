@@ -591,6 +591,50 @@ body {
   line-height: 1.4;
 }
 
+.side-menu-auth-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--muted2);
+  word-break: break-word;
+}
+
+.side-menu-auth-hint.is-error {
+  color: var(--danger);
+}
+
+.side-menu-auth-hint.is-ok {
+  color: var(--accent-text);
+}
+
+.side-menu-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.side-menu-sync-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.side-menu-sync-icon {
+  display: block;
+  flex-shrink: 0;
+  transform-origin: 50% 50%;
+}
+
+.side-menu-sync-btn.is-syncing .side-menu-sync-icon {
+  animation: side-menu-sync-spin 0.85s linear infinite;
+}
+
+@keyframes side-menu-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 #auth-error.is-error {
   color: var(--danger);
   border-left-color: rgba(224, 112, 112, 0.45);

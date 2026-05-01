@@ -443,6 +443,22 @@
   var lastSyncedPayload = "";
   var isApplyingCloudSnapshot = false;
   var cloudSyncTimer = null;
+  var authStateListenerBound = false;
+
+  function setAuthSyncHint(text, kind) {
+    var el = document.getElementById("auth-sync-hint");
+    if (!el) return;
+    if (!text) {
+      el.textContent = "";
+      el.hidden = true;
+      el.classList.remove("is-error", "is-ok");
+      return;
+    }
+    el.textContent = text;
+    el.hidden = false;
+    el.classList.toggle("is-error", kind === "error");
+    el.classList.toggle("is-ok", kind === "ok");
+  }
 
   function nowTs() {
     return Date.now();
@@ -610,8 +626,10 @@
       } catch (e2) {
         lastSyncedPayload = payloadJson;
       }
+      setAuthSyncHint("Đã lưu lên cloud.", "ok");
     } else {
       console.warn("Supabase sync failed:", res.error.message);
+      setAuthSyncHint("Không ghi được cloud: " + res.error.message, "error");
     }
   }
 
@@ -755,6 +773,7 @@
         .maybeSingle();
       if (fetchRes.error) {
         console.warn("Supabase load failed:", fetchRes.error.message);
+        setAuthSyncHint("Không đọc được cloud: " + fetchRes.error.message, "error");
         return;
       }
       if (fetchRes.data && fetchRes.data.payload) {
@@ -768,14 +787,70 @@
             skipUrl: true,
           });
           lastSyncedPayload = JSON.stringify(getAppPayload());
+          setAuthSyncHint("Đã tải dữ liệu từ cloud.", "ok");
         } finally {
           isApplyingCloudSnapshot = false;
         }
       } else {
-        queueSupabaseSync();
+        setAuthSyncHint("Cloud chưa có bản ghi — đang đẩy dữ liệu local lên...", "ok");
+        await syncToSupabaseNow();
       }
     } catch (e) {
       console.warn("Supabase load exception:", e);
+      setAuthSyncHint("Lỗi khi tải cloud. Mở Console (F12) để xem chi tiết.", "error");
+    }
+  }
+
+  async function manualCloudSync() {
+    if (!createSupabaseClientIfNeeded() || !supabaseEnabled) {
+      setAuthSyncHint("Đăng nhập trước để đồng bộ.", "error");
+      return;
+    }
+    if (elBtnCloudSync) {
+      elBtnCloudSync.disabled = true;
+      elBtnCloudSync.classList.add("is-syncing");
+    }
+    setAuthSyncHint("Đang gộp dữ liệu máy + cloud và lưu...", "ok");
+    try {
+      var fetchRes = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select("payload")
+        .eq("id", SUPABASE_STATE_ID)
+        .maybeSingle();
+      if (fetchRes.error) {
+        setAuthSyncHint("Không đọc cloud: " + fetchRes.error.message, "error");
+        return;
+      }
+      var localPayload = getAppPayload();
+      var merged;
+      if (fetchRes.data && fetchRes.data.payload) {
+        merged = mergePayloadForCloud(fetchRes.data.payload, localPayload);
+      } else {
+        merged = normalizeAppDataShape(localPayload);
+      }
+      isApplyingCloudSnapshot = true;
+      try {
+        applyNormalizedAppData(merged);
+        saveAppDataToLocal();
+        applyThemeSettings();
+        refreshAllCategorySelects();
+        openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
+          skipUrl: true,
+        });
+      } finally {
+        isApplyingCloudSnapshot = false;
+      }
+      lastSyncedPayload = "";
+      await syncToSupabaseNow();
+      setAuthSyncHint("Đã đồng bộ hai chiều (gộp + lưu cloud).", "ok");
+    } catch (e) {
+      console.warn("manualCloudSync:", e);
+      setAuthSyncHint("Đồng bộ thất bại.", "error");
+    } finally {
+      if (elBtnCloudSync) {
+        elBtnCloudSync.classList.remove("is-syncing");
+        elBtnCloudSync.disabled = !supabaseEnabled;
+      }
     }
   }
 
@@ -832,6 +907,7 @@
     supabaseUserEmail = session.user.email || "";
     await pullSupabaseStateAndRender();
     attachSupabaseRealtime();
+    await syncToSupabaseNow();
     renderAuthUi();
   }
 
@@ -844,29 +920,65 @@
       cloudSyncTimer = null;
     }
     detachSupabaseChannel();
+    setAuthSyncHint("", "");
     renderAuthUi();
   }
 
-  async function initSupabaseSync(initialMonthKey) {
-    supabaseInitialMonthKey = initialMonthKey || currentMonthKey();
+  function createSupabaseClientIfNeeded() {
+    if (supabaseClient) return supabaseClient;
     if (
       !SUPABASE_URL ||
       !SUPABASE_PUBLISHABLE_KEY ||
       !window.supabase ||
       !window.supabase.createClient
     ) {
-      return;
+      return null;
+    }
+    if (
+      typeof SUPABASE_PUBLISHABLE_KEY === "string" &&
+      SUPABASE_PUBLISHABLE_KEY.length > 0 &&
+      SUPABASE_PUBLISHABLE_KEY.indexOf("eyJ") !== 0
+    ) {
+      console.warn(
+        "Supabase: key trong app nên là anon public JWT (bắt đầu eyJ...) từ Project Settings → API. Key dạng sb_publishable_... có thể không dùng được cho PostgREST."
+      );
     }
     try {
-      supabaseClient = window.supabase.createClient(
-        SUPABASE_URL,
-        SUPABASE_PUBLISHABLE_KEY
-      );
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          storage: window.localStorage,
+        },
+      });
+      return supabaseClient;
     } catch (e) {
       console.warn("Supabase init failed:", e);
+      return null;
+    }
+  }
+
+  function bindSupabaseAuthListener() {
+    if (!supabaseClient || authStateListenerBound) return;
+    authStateListenerBound = true;
+    supabaseClient.auth.onAuthStateChange(function (event, session) {
+      if (event === "SIGNED_OUT") {
+        void disableSupabaseSync();
+        return;
+      }
+      if (event === "SIGNED_IN" && session) {
+        void enableSupabaseSyncBySession(session);
+      }
+    });
+  }
+
+  async function initSupabaseSync(initialMonthKey) {
+    supabaseInitialMonthKey = initialMonthKey || currentMonthKey();
+    if (!createSupabaseClientIfNeeded()) {
       return;
     }
-
+    bindSupabaseAuthListener();
     try {
       var auth = await supabaseClient.auth.getSession();
       if (auth && auth.data && auth.data.session) {
@@ -1097,6 +1209,7 @@
   var elMenuJumpMonth = document.getElementById("menu-jump-month");
   var elMenuJumpBtn = document.getElementById("menu-jump-btn");
   var elAuthStatusText = document.getElementById("auth-status-text");
+  var elBtnCloudSync = document.getElementById("btn-cloud-sync");
   var elBtnAuthToggle = document.getElementById("btn-auth-toggle");
 
   var elViewMonth = document.getElementById("view-month");
@@ -1163,10 +1276,17 @@
         elAuthStatusText.textContent = "Đang đồng bộ cloud: " + emailMask;
       } else {
         elAuthStatusText.textContent = "Đang dùng local trên thiết bị này.";
+        setAuthSyncHint("", "");
       }
     }
     if (elBtnAuthToggle) {
       elBtnAuthToggle.textContent = supabaseEnabled ? "Đăng xuất cloud sync" : "Đăng nhập để đồng bộ";
+    }
+    if (elBtnCloudSync) {
+      elBtnCloudSync.disabled = !supabaseEnabled;
+      elBtnCloudSync.title = supabaseEnabled
+        ? "Gộp dữ liệu trên máy với cloud, cập nhật màn hình, rồi lưu lên server"
+        : "Đăng nhập để đồng bộ cloud";
     }
   }
 
@@ -2974,10 +3094,11 @@
   });
 
   async function handleAuthSubmit() {
-    if (!supabaseClient) {
-      setAuthError("Supabase chưa sẵn sàng.");
+    if (!createSupabaseClientIfNeeded()) {
+      setAuthError("Supabase chưa sẵn sàng (thiếu URL/key hoặc thư viện).");
       return;
     }
+    bindSupabaseAuthListener();
     var email = elAuthEmail ? elAuthEmail.value.trim() : "";
     var password = elAuthPassword ? elAuthPassword.value : "";
     if (!email || !password) {
@@ -3011,7 +3132,8 @@
   }
 
   async function handleAuthToggle() {
-    if (!supabaseClient) return;
+    if (!createSupabaseClientIfNeeded()) return;
+    bindSupabaseAuthListener();
     if (supabaseEnabled) {
       try {
         await supabaseClient.auth.signOut();
@@ -3034,6 +3156,11 @@
 
   if (elBtnAuthToggle) {
     elBtnAuthToggle.addEventListener("click", handleAuthToggle);
+  }
+  if (elBtnCloudSync) {
+    elBtnCloudSync.addEventListener("click", function () {
+      void manualCloudSync();
+    });
   }
   if (elAuthSubmit) {
     elAuthSubmit.addEventListener("click", handleAuthSubmit);
@@ -3080,4 +3207,18 @@
   renderAuthUi();
   openMonth(initialKey, { skipUrl: true });
   initSupabaseSync(initialKey);
+
+  document.addEventListener("visibilitychange", function () {
+    if (!supabaseEnabled || !supabaseClient) return;
+    if (document.visibilityState === "hidden") {
+      void syncToSupabaseNow();
+    } else if (document.visibilityState === "visible") {
+      void pullSupabaseStateAndRender();
+    }
+  });
+  window.addEventListener("pagehide", function () {
+    if (supabaseEnabled && supabaseClient) {
+      void syncToSupabaseNow();
+    }
+  });
 })();
