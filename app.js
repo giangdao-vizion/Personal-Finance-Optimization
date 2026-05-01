@@ -192,6 +192,20 @@
     return sign + formatShortDecimal(n / 1e9) + "tỷ";
   }
 
+  function formatMoneyListShort(n) {
+    if (typeof n !== "number" || isNaN(n)) n = 0;
+    var sign = "";
+    if (n < 0) {
+      sign = "-";
+      n = Math.abs(n);
+    }
+    n = Math.round(n);
+    if (n < 1000) return sign + n;
+    if (n < 1e6) return sign + (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    if (n < 1e9) return sign + (n / 1e6).toFixed(1).replace(/\.0$/, "") + "tr";
+    return sign + (n / 1e9).toFixed(1).replace(/\.0$/, "") + "tỷ";
+  }
+
   function uid() {
     return "e-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
   }
@@ -2072,6 +2086,10 @@
       var li = document.createElement("li");
       li.className = "expense-row";
       li.dataset.id = e.id;
+      var track = document.createElement("div");
+      track.className = "expense-swipe-track";
+      var main = document.createElement("div");
+      main.className = "expense-swipe-main";
 
       var ico = document.createElement("span");
       ico.className = "expense-cat-ico";
@@ -2096,10 +2114,17 @@
       line.title = getCategoryLabel(e.category) + (e.name ? " · " + e.name : "");
       wrap.appendChild(line);
       mid.appendChild(wrap);
+      var inputDate = formatExpenseInputDate(e);
+      if (inputDate) {
+        var dateEl = document.createElement("span");
+        dateEl.className = "expense-row-date";
+        dateEl.textContent = inputDate;
+        mid.appendChild(dateEl);
+      }
 
       var amt = document.createElement("span");
       amt.className = "expense-row-amt";
-      amt.textContent = formatMoneyVND(e.amount);
+      amt.textContent = formatMoneyListShort(e.amount);
 
       var actions = document.createElement("div");
       actions.className = "expense-row-actions";
@@ -2113,22 +2138,27 @@
         openEditExpenseDialog(e.id);
       });
 
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-icon btn-icon-danger";
-      btn.setAttribute("aria-label", "Xóa khoản chi");
-      btn.appendChild(iconTrashSvg());
-      btn.addEventListener("click", function () {
+      actions.appendChild(btnEdit);
+      main.appendChild(ico);
+      main.appendChild(mid);
+      main.appendChild(amt);
+      main.appendChild(actions);
+
+      var btnDelete = document.createElement("button");
+      btnDelete.type = "button";
+      btnDelete.className = "expense-item-delete";
+      btnDelete.setAttribute("aria-label", "Xóa khoản chi");
+      btnDelete.appendChild(iconTrashSvg());
+      btnDelete.addEventListener("click", function (ev) {
+        ev.stopPropagation();
         removeExpense(e.id);
       });
 
-      actions.appendChild(btnEdit);
-      actions.appendChild(btn);
-
-      li.appendChild(ico);
-      li.appendChild(mid);
-      li.appendChild(amt);
-      li.appendChild(actions);
+      track.appendChild(main);
+      track.appendChild(btnDelete);
+      li.appendChild(track);
+      setExpenseRowOffset(li, 0, false);
+      attachExpenseSwipe(li, main);
       elExpenseList.appendChild(li);
     });
 
@@ -2186,6 +2216,19 @@
     if (!m) return 0;
     var n = parseInt(m[1], 36);
     return isNaN(n) ? 0 : n;
+  }
+
+  function formatExpenseInputDate(e) {
+    var ts = expenseCreatedAt(e);
+    if (!ts && e && typeof e.updatedAt === "number" && e.updatedAt > 0) {
+      ts = e.updatedAt;
+    }
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    var day = String(d.getDate()).padStart(2, "0");
+    var month = String(d.getMonth() + 1).padStart(2, "0");
+    return day + "/" + month;
   }
 
   function renderExpenseFilterButtons() {
@@ -2272,7 +2315,98 @@
     persistAndRender();
   }
 
+  var EXPENSE_SWIPE_DELETE_PX = 64;
   var SIDE_MENU_SWIPE_DELETE_PX = 67;
+
+  function setExpenseRowOffset(li, px, animate) {
+    if (!li) return;
+    var main = li.querySelector(".expense-swipe-main");
+    if (!main) return;
+    var x = Math.max(0, Math.min(EXPENSE_SWIPE_DELETE_PX, Math.round(px || 0)));
+    main.style.transition = animate ? "transform 0.2s ease" : "none";
+    main.style.transform = "translateX(" + -x + "px)";
+    li.dataset.swipeOffset = String(x);
+    li.classList.toggle("is-swiped", x > 0);
+    li.classList.toggle("is-swiped-open", x >= EXPENSE_SWIPE_DELETE_PX);
+  }
+
+  function closeAllExpenseSwipes(exceptLi) {
+    if (!elExpenseList) return;
+    var rows = elExpenseList.querySelectorAll("li.expense-row.is-swiped-open");
+    var i;
+    for (i = 0; i < rows.length; i++) {
+      if (exceptLi && rows[i] === exceptLi) continue;
+      setExpenseRowOffset(rows[i], 0, true);
+    }
+  }
+
+  function attachExpenseSwipe(li, main) {
+    if (!li || !main) return;
+    var startX = 0;
+    var startY = 0;
+    var baseOffset = 0;
+    var dragging = false;
+    var touchId = null;
+
+    main.addEventListener("click", function (ev) {
+      if ((parseInt(li.dataset.swipeOffset || "0", 10) || 0) > 0) {
+        ev.preventDefault();
+        setExpenseRowOffset(li, 0, true);
+      }
+    });
+
+    main.addEventListener(
+      "touchstart",
+      function (ev) {
+        if (!ev.changedTouches || !ev.changedTouches.length) return;
+        closeAllExpenseSwipes(li);
+        var t = ev.changedTouches[0];
+        touchId = t.identifier;
+        startX = t.clientX;
+        startY = t.clientY;
+        baseOffset = parseInt(li.dataset.swipeOffset || "0", 10) || 0;
+        dragging = true;
+      },
+      { passive: true }
+    );
+
+    main.addEventListener(
+      "touchmove",
+      function (ev) {
+        if (!dragging || touchId == null || !ev.changedTouches) return;
+        var i;
+        var t = null;
+        for (i = 0; i < ev.changedTouches.length; i++) {
+          if (ev.changedTouches[i].identifier === touchId) {
+            t = ev.changedTouches[i];
+            break;
+          }
+        }
+        if (!t) return;
+        var dx = t.clientX - startX;
+        var dy = t.clientY - startY;
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 6) {
+          dragging = false;
+          return;
+        }
+        var offset = baseOffset - dx;
+        setExpenseRowOffset(li, offset, false);
+      },
+      { passive: true }
+    );
+
+    function finishTouch() {
+      if (!li) return;
+      var offset = parseInt(li.dataset.swipeOffset || "0", 10) || 0;
+      var shouldOpen = offset >= EXPENSE_SWIPE_DELETE_PX * 0.45;
+      setExpenseRowOffset(li, shouldOpen ? EXPENSE_SWIPE_DELETE_PX : 0, true);
+      dragging = false;
+      touchId = null;
+    }
+
+    main.addEventListener("touchend", finishTouch, { passive: true });
+    main.addEventListener("touchcancel", finishTouch, { passive: true });
+  }
 
   function setSideMenuRowOffset(li, px, animate) {
     if (!li) return;
