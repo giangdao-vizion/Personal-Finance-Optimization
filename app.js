@@ -1606,7 +1606,9 @@
     app.fixedTemplates.forEach(function (t) {
       if (!t || !t.id || !categoryIdExists(t.category) || isRowDeleted(t)) return;
       var exists = m.expenses.some(function (e) {
-        return e.templateId === t.id && !isRowDeleted(e);
+        // Keep month-level deletion tombstones: if user deleted a fixed row in this month,
+        // do not auto-recreate it after refresh.
+        return e.templateId === t.id;
       });
       if (!exists) {
         m.expenses.push({
