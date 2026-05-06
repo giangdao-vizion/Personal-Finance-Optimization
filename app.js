@@ -1259,8 +1259,6 @@
   var editingCategoryId = null;
   var editingJarId = null;
   var expenseListFilter = "all";
-  var expensePage = 1;
-  var EXPENSE_PAGE_SIZE = 10;
   var incomeProgrammatic = false;
   var incomeDirty = false;
 
@@ -1400,9 +1398,6 @@
   var elExpenseFilterAll = document.getElementById("expense-filter-all");
   var elExpenseFilterFixed = document.getElementById("expense-filter-fixed");
   var elExpenseFilterFlex = document.getElementById("expense-filter-flex");
-  var elExpensePagePrev = document.getElementById("expense-page-prev");
-  var elExpensePageInfo = document.getElementById("expense-page-info");
-  var elExpensePageNext = document.getElementById("expense-page-next");
   var elReportModePie = document.getElementById("report-mode-pie");
   var elReportModeJars = document.getElementById("report-mode-jars");
   var elReportJarPieToolbar = document.getElementById("report-jar-pie-toolbar");
@@ -2843,11 +2838,6 @@
     if (!state) return;
     var rows = getVisibleExpenses();
     var totalRecords = rows.length;
-    var totalPages = Math.max(1, Math.ceil(totalRecords / EXPENSE_PAGE_SIZE));
-    if (expensePage > totalPages) expensePage = totalPages;
-    if (expensePage < 1) expensePage = 1;
-    var startIdx = (expensePage - 1) * EXPENSE_PAGE_SIZE;
-    var pageRows = rows.slice(startIdx, startIdx + EXPENSE_PAGE_SIZE);
     var hasRows = totalRecords > 0;
     elEmpty.hidden = hasRows;
     if (!hasRows) {
@@ -2857,9 +2847,8 @@
           : "Không có khoản chi phù hợp bộ lọc.";
     }
     renderExpenseFilterButtons();
-    renderExpensePagination(totalRecords, totalPages);
 
-    pageRows.forEach(function (e) {
+    rows.forEach(function (e) {
       var li = document.createElement("li");
       li.className = "expense-row";
       li.dataset.id = e.id;
@@ -2952,14 +2941,6 @@
     elExpenseList.appendChild(totalLi);
   }
 
-  function renderExpensePagination(totalRecords, totalPages) {
-    if (elExpensePageInfo) {
-      elExpensePageInfo.textContent = expensePage + "/" + totalPages;
-    }
-    if (elExpensePagePrev) elExpensePagePrev.disabled = expensePage <= 1;
-    if (elExpensePageNext) elExpensePageNext.disabled = expensePage >= totalPages;
-  }
-
   function isFixedExpenseRow(e) {
     return !!(e && e.templateId);
   }
@@ -3025,7 +3006,6 @@
   function setExpenseFilter(next) {
     if (next !== "all" && next !== "fixed" && next !== "flex") return;
     expenseListFilter = next;
-    expensePage = 1;
     renderExpenseList();
   }
 
@@ -3556,7 +3536,6 @@
     flushIncomeFromField();
     ensureMonth(key);
     state = app.months[key];
-    expensePage = 1;
     state.expenses = state.expenses.map(normalizeExpenseRow);
     if (!state.incomeUserSet) {
       state.income = getDefaultMonthlyLimit();
@@ -3662,7 +3641,6 @@
     };
     if (templateId) row.templateId = templateId;
     state.expenses.push(row);
-    expensePage = 1;
     elName.value = "";
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
@@ -3699,19 +3677,6 @@
   if (elExpenseFilterFlex) {
     elExpenseFilterFlex.addEventListener("click", function () {
       setExpenseFilter("flex");
-    });
-  }
-  if (elExpensePagePrev) {
-    elExpensePagePrev.addEventListener("click", function () {
-      if (expensePage <= 1) return;
-      expensePage -= 1;
-      renderExpenseList();
-    });
-  }
-  if (elExpensePageNext) {
-    elExpensePageNext.addEventListener("click", function () {
-      expensePage += 1;
-      renderExpenseList();
     });
   }
   if (elReportModePie) {
