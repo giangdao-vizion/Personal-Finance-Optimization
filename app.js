@@ -1444,7 +1444,6 @@
   var elSettingsDefaultLimit = document.getElementById("settings-default-limit");
   var elSettingsDefaultLimitPreview = document.getElementById("settings-default-limit-preview");
   var elSettingsThemeSelect = document.getElementById("settings-theme-select");
-  var elSettingsThemePreview = document.getElementById("settings-theme-preview");
   var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
   var elSettingsAddFixedPanel = document.getElementById("settings-add-fixed-panel");
   var elBtnSettingsShowAddFixed = document.getElementById("btn-settings-show-add-fixed");
@@ -1475,6 +1474,7 @@
   var elSettingsAddJarForm = document.getElementById("settings-add-jar-form");
   var elSettingsNewJarLabel = document.getElementById("settings-new-jar-label");
   var elSettingsNewJarColor = document.getElementById("settings-new-jar-color");
+  var elSettingsNewJarColorSwatches = document.getElementById("settings-new-jar-color-swatches");
   var elSettingsNewJarLimit = document.getElementById("settings-new-jar-limit");
   var elSettingsNewJarLimitPreview = document.getElementById("settings-new-jar-limit-preview");
   var elSettingsNewJarCategories = document.getElementById("settings-new-jar-categories");
@@ -1485,6 +1485,7 @@
   var elEditJarBackdrop = document.getElementById("edit-jar-backdrop");
   var elEditJarLabelInput = document.getElementById("edit-jar-label-input");
   var elEditJarColor = document.getElementById("edit-jar-color");
+  var elEditJarColorSwatches = document.getElementById("edit-jar-color-swatches");
   var elEditJarLimit = document.getElementById("edit-jar-limit");
   var elEditJarLimitPreview = document.getElementById("edit-jar-limit-preview");
   var elEditJarCategories = document.getElementById("edit-jar-categories");
@@ -1510,6 +1511,7 @@
   var elEditExpenseName = document.getElementById("edit-expense-name");
   var elEditAmount = document.getElementById("edit-expense-amount");
   var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
+  var elEditExpenseFixed = document.getElementById("edit-expense-fixed");
   var elEditTemplateNote = document.getElementById("edit-expense-template-note");
   var elEditSave = document.getElementById("edit-expense-save");
   var elEditCancel = document.getElementById("edit-expense-cancel");
@@ -1523,6 +1525,46 @@
   var reportMode = "pie";
   /** Khi báo cáo ở chế độ Hũ: null = pie tất cả hũ; id hũ hoặc CONSOLIDATED_JAR_ID = pie danh mục trong hũ */
   var reportJarDrillId = null;
+
+  var JAR_COLOR_PRESETS = [
+    "#e8a598",
+    "#f3b8c8",
+    "#d7b6ff",
+    "#a9c4ff",
+    "#8fd3ff",
+    "#7fe0d2",
+    "#9fd6a8",
+    "#f5d68a",
+    "#f7b37a",
+    "#d1d7e0",
+  ];
+
+  function renderJarColorSwatches(containerEl, hiddenInputEl, selectedColor) {
+    if (!containerEl || !hiddenInputEl) return;
+    var sel = normalizeHexColor(selectedColor || hiddenInputEl.value || "#e8a598");
+    hiddenInputEl.value = sel;
+    containerEl.innerHTML = "";
+    var list = JAR_COLOR_PRESETS.slice();
+    var hasSel = list.some(function (hex) {
+      return normalizeHexColor(hex) === sel;
+    });
+    if (!hasSel) list.unshift(sel);
+    list.forEach(function (hex) {
+      var li = document.createElement("li");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "jar-color-swatch" + (normalizeHexColor(hex) === sel ? " is-selected" : "");
+      btn.style.background = hex;
+      btn.setAttribute("aria-label", "Chọn màu " + hex);
+      btn.setAttribute("aria-pressed", normalizeHexColor(hex) === sel ? "true" : "false");
+      btn.addEventListener("click", function () {
+        hiddenInputEl.value = normalizeHexColor(hex);
+        renderJarColorSwatches(containerEl, hiddenInputEl, hiddenInputEl.value);
+      });
+      li.appendChild(btn);
+      containerEl.appendChild(li);
+    });
+  }
 
   function renderAuthUi() {
     if (elAuthStatusText) {
@@ -1716,6 +1758,7 @@
   function resetSettingsAddJarForm() {
     if (elSettingsNewJarLabel) elSettingsNewJarLabel.value = "";
     if (elSettingsNewJarColor) elSettingsNewJarColor.value = "#e8a598";
+    renderJarColorSwatches(elSettingsNewJarColorSwatches, elSettingsNewJarColor, "#e8a598");
     if (elSettingsNewJarLimit) elSettingsNewJarLimit.value = "";
     updateAmountPreview(elSettingsNewJarLimit, elSettingsNewJarLimitPreview);
     renderNewJarCategoryCheckboxes();
@@ -1878,6 +1921,7 @@
     editingJarId = jarId;
     if (elEditJarLabelInput) elEditJarLabelInput.value = j.label;
     if (elEditJarColor) elEditJarColor.value = j.color;
+    renderJarColorSwatches(elEditJarColorSwatches, elEditJarColor, j.color);
     if (elEditJarLimit) elEditJarLimit.value = formatAsNganDisplay(j.limitAmount);
     updateAmountPreview(elEditJarLimit, elEditJarLimitPreview);
     renderJarCategoryCheckboxes(elEditJarCategories, "jar-cat-edit", j.categoryIds || []);
@@ -2081,7 +2125,7 @@
     renderSettingsCategoriesList();
     if (activeMonthKey && state) {
       state.expenses = state.expenses.map(normalizeExpenseRow);
-      syncFixedIntoMonth(state);
+      syncFixedIntoMonth(state, activeMonthKey);
       persistAndRender();
     } else {
       renderFixedTemplatesList();
@@ -2201,8 +2245,18 @@
     return o;
   }
 
-  function syncFixedIntoMonth(m) {
+  function syncFixedIntoMonth(m, monthKey) {
     if (!Array.isArray(app.fixedTemplates)) return;
+    // Chỉ tự động bổ sung khoản cố định cho tháng hiện tại/tương lai.
+    // Tháng quá khứ sẽ không tự thêm nếu còn thiếu.
+    if (
+      monthKey &&
+      typeof monthKey === "string" &&
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey)
+    ) {
+      var nowKey = currentMonthKey();
+      if (monthKey < nowKey) return;
+    }
     app.fixedTemplates.forEach(function (t) {
       if (!t || !t.id || !categoryIdExists(t.category) || isRowDeleted(t)) return;
       var exists = m.expenses.some(function (e) {
@@ -2672,11 +2726,6 @@
     if (!elSettingsThemeSelect) return;
     var mode = normalizeThemeMode(app.settings && app.settings.themeMode);
     elSettingsThemeSelect.value = mode;
-    if (elSettingsThemePreview) {
-      var preset = THEME_PRESETS[mode] || THEME_PRESETS.dark;
-      elSettingsThemePreview.style.background =
-        "linear-gradient(135deg, " + preset.appBg + " 0%, " + preset.accent + " 100%)";
-    }
   }
 
   function iconTrashSvg() {
@@ -3512,7 +3561,7 @@
     if (!state.incomeUserSet) {
       state.income = getDefaultMonthlyLimit();
     }
-    syncFixedIntoMonth(state);
+    syncFixedIntoMonth(state, key);
     activeMonthKey = key;
     reportJarDrillId = null;
 
@@ -3631,7 +3680,7 @@
         )
       ) {
         state.expenses = [];
-        syncFixedIntoMonth(state);
+        syncFixedIntoMonth(state, activeMonthKey);
         persistAndRender();
       }
     });
@@ -3856,7 +3905,7 @@
       updatedAt: nowTs(),
     });
     saveAppData();
-    if (state) syncFixedIntoMonth(state);
+    if (state) syncFixedIntoMonth(state, activeMonthKey);
     renderFixedTemplatesList();
     if (activeMonthKey && state) persistAndRender();
     setSettingsAddFixedPanelOpen(false);
@@ -3883,6 +3932,10 @@
     });
     if (!e) return;
     editingExpenseId = expenseId;
+    var isPastMonth =
+      !!activeMonthKey &&
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(activeMonthKey) &&
+      activeMonthKey < currentMonthKey();
     var cat = getCategoryLabel(e.category);
     var line = e.name ? e.name + " · " + cat : cat;
     elEditDesc.textContent = line;
@@ -3890,6 +3943,15 @@
     if (elEditExpenseName) elEditExpenseName.value = e.name || "";
     elEditAmount.value = formatAsNganDisplay(e.amount);
     updateAmountPreview(elEditAmount, elEditAmountPreview);
+    if (elEditExpenseFixed) {
+      elEditExpenseFixed.checked = !!e.templateId;
+      // Không cho tạo mới khoản cố định từ tháng quá khứ.
+      // Nếu khoản đã là cố định (có templateId) thì vẫn cho xem trạng thái.
+      elEditExpenseFixed.disabled = isPastMonth && !e.templateId;
+      elEditExpenseFixed.title = elEditExpenseFixed.disabled
+        ? "Chỉ bật cố định ở tháng hiện tại hoặc tương lai."
+        : "";
+    }
     if (elEditTemplateNote) {
       if (e.templateId) {
         elEditTemplateNote.hidden = false;
@@ -4006,6 +4068,25 @@
     e.name = nameTrim;
     e.amount = amount;
     e.updatedAt = nowTs();
+    if (elEditExpenseFixed && elEditExpenseFixed.checked && !e.templateId) {
+      var isPastMonth =
+        !!activeMonthKey &&
+        /^\d{4}-(0[1-9]|1[0-2])$/.test(activeMonthKey) &&
+        activeMonthKey < currentMonthKey();
+      if (isPastMonth) {
+        window.alert("Chỉ có thể lưu thành khoản cố định ở tháng hiện tại hoặc tương lai.");
+      } else {
+        var templateId = "ft-" + uid();
+        app.fixedTemplates.push({
+          id: templateId,
+          category: cat,
+          name: nameTrim,
+          amount: amount,
+          updatedAt: nowTs(),
+        });
+        e.templateId = templateId;
+      }
+    }
     if (e.templateId) {
       var t = findFixedTemplate(e.templateId);
       if (t) {

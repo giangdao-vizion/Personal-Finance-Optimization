@@ -676,15 +676,6 @@ body.modal-open {
   flex: 1;
 }
 
-.settings-theme-preview {
-  width: 1.7rem;
-  height: 1.7rem;
-  border-radius: 999px;
-  border: 2px solid var(--border-strong);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
-  flex-shrink: 0;
-}
-
 .settings-categories-list {
   list-style: none;
   margin: 0 0 1rem;
@@ -958,14 +949,52 @@ body.modal-open {
   flex-wrap: wrap;
 }
 
-.settings-jar-color-row input[type="color"] {
-  width: 3rem;
-  height: 2.5rem;
+.jar-color-swatches {
+  list-style: none;
+  margin: 0;
   padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.jar-color-swatch {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 999px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
   cursor: pointer;
+  padding: 0;
+  position: relative;
+}
+
+.jar-color-swatch:hover {
+  filter: brightness(1.03);
+}
+
+.jar-color-swatch.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.jar-color-swatch.is-selected::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 800;
+  color: rgba(12, 16, 20, 0.82);
+  text-shadow: 0 1px 6px rgba(255, 255, 255, 0.28);
+}
+
+.jar-color-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .settings-jar-color-hint {
@@ -2112,6 +2141,14 @@ select:focus-visible {
   }
 }
 
+/* Mobile: riêng tooltip "Cố định" trong modal sửa khoản chi */
+@media (max-width: 460px) {
+  #edit-expense-dialog .inline-info-hint .field-hint {
+    left: 0;
+    right: auto;
+  }
+}
+
 .fixed-saved-wrap {
   margin-top: 1.1rem;
   padding-top: 1rem;
@@ -2251,6 +2288,10 @@ select:focus-visible {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-float);
+}
+
+.modal-panel-overflow-visible {
+  overflow: visible;
 }
 
 .modal-title {

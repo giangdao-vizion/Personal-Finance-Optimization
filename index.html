@@ -324,7 +324,6 @@
       <label class="field settings-theme-select-field">
         <span class="field-label">Bộ màu</span>
         <div class="settings-theme-select-row">
-          <span id="settings-theme-preview" class="settings-theme-preview" aria-hidden="true"></span>
           <div class="select-wrap">
             <select id="settings-theme-select" aria-label="Chọn bộ màu">
               <option value="dark">🌑 Dark</option>
@@ -392,7 +391,8 @@
           <div class="field settings-jar-color-field">
             <span class="field-label">Màu hũ</span>
             <div class="settings-jar-color-row">
-              <input type="color" id="settings-new-jar-color" value="#e8a598" aria-label="Chọn màu hũ" />
+              <input type="hidden" id="settings-new-jar-color" value="#e8a598" />
+              <ul id="settings-new-jar-color-swatches" class="jar-color-swatches" aria-label="Chọn màu hũ"></ul>
               <span class="field-hint settings-jar-color-hint">Áp dụng cho biểu tượng lợn tiết kiệm</span>
             </div>
           </div>
@@ -514,7 +514,8 @@
       <div class="field settings-jar-color-field">
         <span class="field-label">Màu hũ</span>
         <div class="settings-jar-color-row">
-          <input type="color" id="edit-jar-color" value="#e8a598" aria-label="Chọn màu hũ" />
+          <input type="hidden" id="edit-jar-color" value="#e8a598" />
+          <ul id="edit-jar-color-swatches" class="jar-color-swatches" aria-label="Chọn màu hũ"></ul>
         </div>
       </div>
       <label class="field">
@@ -596,7 +597,7 @@
   <div id="edit-expense-dialog" class="modal" hidden aria-hidden="true">
     <div class="modal-backdrop" id="edit-expense-backdrop" tabindex="-1"></div>
     <div
-      class="modal-panel"
+      class="modal-panel modal-panel-overflow-visible"
       role="dialog"
       aria-modal="true"
       aria-labelledby="edit-expense-title"
@@ -621,6 +622,18 @@
           <input type="text" id="edit-expense-amount" class="amount-input" inputmode="decimal" autocomplete="off" />
         </div>
       </label>
+      <div class="field field-checkbox-expense field-checkbox-inline">
+        <label class="checkbox-row">
+          <input type="checkbox" id="edit-expense-fixed" />
+          <span class="checkbox-label-text">Cố định</span>
+        </label>
+        <details class="inline-info-hint">
+          <summary aria-label="Xem thông tin về khoản cố định">
+            <span class="inline-info-icon" aria-hidden="true">i</span>
+          </summary>
+          <p class="field-hint">Chỉ áp dụng cho tháng hiện tại hoặc tương lai. Khi bật, tháng mới sẽ tự có khoản này.</p>
+        </details>
+      </div>
       <p id="edit-expense-template-note" class="modal-note" hidden>Khoản cố định: lưu sẽ cập nhật mặc định cho tháng mới.</p>
       <div class="modal-actions">
         <button type="button" id="edit-expense-save" class="btn btn-primary btn-block">Lưu</button>
