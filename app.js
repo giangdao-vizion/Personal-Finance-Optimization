@@ -24,6 +24,14 @@
     { id: "pill", sym: "💊" },
     { id: "bolt", sym: "⚡" },
     { id: "money", sym: "💰" },
+    { id: "tuition", sym: "🎓" },
+    { id: "entertainment", sym: "🎬" },
+    { id: "travel", sym: "✈️" },
+    { id: "fashion", sym: "👔" },
+    { id: "gift", sym: "🎁" },
+    { id: "pet", sym: "🐕" },
+    { id: "fitness", sym: "🏋️" },
+    { id: "book", sym: "📚" },
     { id: "pin", sym: "📌" },
   ];
   var ICON_PRESET_NAMES = {
@@ -37,8 +45,21 @@
     pill: "Sức khỏe",
     bolt: "Điện nước",
     money: "Tài chính",
+    tuition: "Học phí",
+    entertainment: "Giải trí",
+    travel: "Du lịch",
+    fashion: "Thời trang",
+    gift: "Quà tặng",
+    pet: "Vật nuôi",
+    fitness: "Thể thao / gym",
+    book: "Sách",
     pin: "Khác",
   };
+
+  /** Hũ ảo trên màn tháng: danh mục chưa gắn hũ nào */
+  var CONSOLIDATED_JAR_ID = "__consolidated";
+  var CONSOLIDATED_JAR_LABEL = "Tổng hợp";
+  var CONSOLIDATED_JAR_COLOR = "#7d8fa3";
 
   /** Nhãn cho id danh mục cũ (trước khi có danh mục tùy chỉnh) — dùng khi gộp dữ liệu cũ */
   var LEGACY_CATEGORY_LABELS = {
@@ -98,6 +119,50 @@
     }
     if (!okIcon) iconId = "pin";
     return { id: id, label: label, iconId: iconId };
+  }
+
+  function normalizeHexColor(raw) {
+    var s = typeof raw === "string" ? raw.trim() : "";
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+    if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+      return (
+        "#" +
+        s[1] +
+        s[1] +
+        s[2] +
+        s[2] +
+        s[3] +
+        s[3]
+      ).toLowerCase();
+    }
+    return "#e8a598";
+  }
+
+  function normalizeSpendingJarRow(j) {
+    var row = j && typeof j === "object" ? j : {};
+    var ids = Array.isArray(row.categoryIds)
+      ? row.categoryIds.filter(function (id) {
+          return typeof id === "string" && id;
+        })
+      : [];
+    var lim = row.limitAmount;
+    var limitAmount =
+      typeof lim === "number" && !isNaN(lim) ? Math.max(0, Math.round(lim)) : 0;
+    var label = typeof row.label === "string" ? row.label.trim().slice(0, 40) : "";
+    if (!label) label = "Hũ";
+    var jid = typeof row.id === "string" && row.id ? row.id : "jar-" + uid();
+    var uAt =
+      typeof row.updatedAt === "number" && row.updatedAt > 0
+        ? Math.round(row.updatedAt)
+        : Date.now();
+    return {
+      id: jid,
+      label: label,
+      color: normalizeHexColor(row.color),
+      limitAmount: limitAmount,
+      categoryIds: ids,
+      updatedAt: uAt,
+    };
   }
 
   var VND_PER_INPUT_UNIT = 1000;
@@ -384,11 +449,14 @@
     } else {
       categories = defaultCategories();
     }
+    var spendingJarsSrc = Array.isArray(src.spendingJars) ? src.spendingJars : [];
+    var spendingJars = spendingJarsSrc.map(normalizeSpendingJarRow);
     return {
       months: months,
       fixedTemplates: fixedTemplates,
       settings: settings,
       categories: categories,
+      spendingJars: spendingJars,
     };
   }
 
@@ -436,6 +504,7 @@
               fixedTemplates: defaultFixedTemplates(),
               settings: defaultSettings(),
               categories: defaultCategories(),
+              spendingJars: [],
             })
           );
         } catch (e3) {}
@@ -446,6 +515,7 @@
       fixedTemplates: defaultFixedTemplates(),
       settings: defaultSettings(),
       categories: defaultCategories(),
+      spendingJars: [],
     });
   }
 
@@ -496,6 +566,12 @@
     return isNaN(n) ? 0 : n;
   }
 
+  function jarUpdatedAt(j) {
+    if (!j || typeof j !== "object") return 0;
+    var v = typeof j.updatedAt === "number" ? j.updatedAt : 0;
+    return v > 0 ? v : 0;
+  }
+
   function isRowDeleted(row) {
     return !!(row && typeof row.deletedAt === "number" && row.deletedAt > 0);
   }
@@ -510,6 +586,7 @@
       fixedTemplates: app.fixedTemplates,
       settings: app.settings,
       categories: app.categories,
+      spendingJars: app.spendingJars,
     };
   }
 
@@ -552,6 +629,14 @@
       ),
       settings: local.settings,
       categories: local.categories,
+      spendingJars: mergeRowsById(
+        remote.spendingJars || [],
+        local.spendingJars || [],
+        function (j) {
+          return j && j.id;
+        },
+        jarUpdatedAt
+      ).map(normalizeSpendingJarRow),
     };
     var monthKeys = {};
     Object.keys(remote.months || {}).forEach(function (k) {
@@ -752,6 +837,7 @@
   }
 
   ensureAppCategories();
+  ensureSpendingJarsNormalized();
 
   function normalizeAllFixedTemplates() {
     if (!Array.isArray(app.fixedTemplates)) {
@@ -774,6 +860,10 @@
     app.categories = nextData.categories;
     migrateAllMonthsIncomeUserSet();
     ensureAppCategories();
+    app.spendingJars = Array.isArray(nextData.spendingJars)
+      ? nextData.spendingJars.map(normalizeSpendingJarRow)
+      : [];
+    ensureSpendingJarsNormalized();
     normalizeAllFixedTemplates();
   }
 
@@ -1030,6 +1120,125 @@
     return app.categories[0] ? app.categories[0].id : "cat-an-uong";
   }
 
+  function dedupeJarCategoriesExclusive() {
+    if (!Array.isArray(app.spendingJars)) return;
+    var claimed = {};
+    app.spendingJars.forEach(function (j) {
+      var next = [];
+      (j.categoryIds || []).forEach(function (id) {
+        if (!categoryIdExists(id)) return;
+        if (claimed[id]) return;
+        claimed[id] = true;
+        next.push(id);
+      });
+      if (next.length !== (j.categoryIds || []).length) {
+        j.categoryIds = next;
+        j.updatedAt = nowTs();
+      }
+    });
+  }
+
+  function ensureSpendingJarsNormalized() {
+    if (!Array.isArray(app.spendingJars)) app.spendingJars = [];
+    app.spendingJars = app.spendingJars.map(normalizeSpendingJarRow);
+    app.spendingJars.forEach(function (j) {
+      j.categoryIds = (j.categoryIds || []).filter(categoryIdExists);
+    });
+    dedupeJarCategoriesExclusive();
+  }
+
+  function reserveCategoriesForJar(jarId, catIds) {
+    var set = {};
+    catIds.forEach(function (id) {
+      if (categoryIdExists(id)) set[id] = true;
+    });
+    app.spendingJars.forEach(function (j) {
+      if (j.id === jarId) return;
+      var prev = (j.categoryIds || []).slice();
+      var next = prev.filter(function (id) {
+        return !set[id];
+      });
+      if (next.length !== prev.length) {
+        j.categoryIds = next;
+        j.updatedAt = nowTs();
+      }
+    });
+  }
+
+  function findSpendingJar(jarId) {
+    if (!jarId || !Array.isArray(app.spendingJars)) return null;
+    var i;
+    for (i = 0; i < app.spendingJars.length; i++) {
+      if (app.spendingJars[i].id === jarId) return app.spendingJars[i];
+    }
+    return null;
+  }
+
+  function remapCategoryInJars(fromId, toId) {
+    if (!fromId || !toId || fromId === toId) return;
+    app.spendingJars.forEach(function (j) {
+      var seen = {};
+      var next = [];
+      (j.categoryIds || []).forEach(function (id) {
+        var nid = id === fromId ? toId : id;
+        if (!categoryIdExists(nid)) return;
+        if (seen[nid]) return;
+        seen[nid] = true;
+        next.push(nid);
+      });
+      if (JSON.stringify(next) !== JSON.stringify(j.categoryIds || [])) {
+        j.categoryIds = next;
+        j.updatedAt = nowTs();
+      }
+    });
+    dedupeJarCategoriesExclusive();
+  }
+
+  function computeJarSpentForMonth(month, jar) {
+    if (!month || !Array.isArray(month.expenses) || !jar) return 0;
+    var set = {};
+    (jar.categoryIds || []).forEach(function (id) {
+      set[id] = true;
+    });
+    return month.expenses.reduce(function (s, e) {
+      if (isRowDeleted(e)) return s;
+      if (set[e.category]) return s + e.amount;
+      return s;
+    }, 0);
+  }
+
+  function getCategoryIdsClaimedByUserJars() {
+    var set = {};
+    (app.spendingJars || []).forEach(function (j) {
+      (j.categoryIds || []).forEach(function (id) {
+        set[id] = true;
+      });
+    });
+    return set;
+  }
+
+  function getUnclaimedCategoryIds() {
+    var claimed = getCategoryIdsClaimedByUserJars();
+    var out = [];
+    app.categories.forEach(function (c) {
+      if (!claimed[c.id]) out.push(c.id);
+    });
+    return out;
+  }
+
+  function computeSpentForCategories(month, categoryIds) {
+    if (!month || !Array.isArray(month.expenses) || !categoryIds.length) return 0;
+    var set = {};
+    categoryIds.forEach(function (id) {
+      set[id] = true;
+    });
+    return month.expenses.reduce(function (s, e) {
+      if (isRowDeleted(e)) return s;
+      if (set[e.category]) return s + e.amount;
+      return s;
+    }, 0);
+  }
+
   function reassignCategoryEverywhere(fromId, toId) {
     Object.keys(app.months).forEach(function (k) {
       var m = app.months[k];
@@ -1048,6 +1257,7 @@
   var editingExpenseId = null;
   var editingFixedTemplateId = null;
   var editingCategoryId = null;
+  var editingJarId = null;
   var expenseListFilter = "all";
   var expensePage = 1;
   var EXPENSE_PAGE_SIZE = 10;
@@ -1193,9 +1403,11 @@
   var elExpensePagePrev = document.getElementById("expense-page-prev");
   var elExpensePageInfo = document.getElementById("expense-page-info");
   var elExpensePageNext = document.getElementById("expense-page-next");
-  var elReportModeBreakdown = document.getElementById("report-mode-breakdown");
   var elReportModePie = document.getElementById("report-mode-pie");
-  var elReportBreakdownView = document.getElementById("report-breakdown-view");
+  var elReportModeJars = document.getElementById("report-mode-jars");
+  var elReportJarPieToolbar = document.getElementById("report-jar-pie-toolbar");
+  var elReportJarPieBack = document.getElementById("report-jar-pie-back");
+  var elReportJarPieHint = document.getElementById("report-jar-pie-hint");
   var elReportPieView = document.getElementById("report-pie-view");
   var elSumIncome = document.getElementById("sum-income");
   var elSumExpenses = document.getElementById("sum-expenses");
@@ -1206,7 +1418,6 @@
   var elBalanceForecastNote = document.getElementById("balance-forecast-note");
   var elBalanceForecastDay = document.getElementById("balance-forecast-day");
   var elBalanceForecastWeek = document.getElementById("balance-forecast-week");
-  var elBreakdown = document.getElementById("category-breakdown");
   var elBtnClear = document.getElementById("btn-clear-all");
   var elPieEmpty = document.getElementById("pie-chart-empty");
   var elPieBody = document.getElementById("pie-chart-body");
@@ -1235,12 +1446,18 @@
   var elSettingsThemeSelect = document.getElementById("settings-theme-select");
   var elSettingsThemePreview = document.getElementById("settings-theme-preview");
   var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
+  var elSettingsAddFixedPanel = document.getElementById("settings-add-fixed-panel");
+  var elBtnSettingsShowAddFixed = document.getElementById("btn-settings-show-add-fixed");
+  var elBtnSettingsCancelAddFixed = document.getElementById("btn-settings-cancel-add-fixed");
   var elSettingsAddFixedForm = document.getElementById("settings-add-fixed-form");
   var elSettingsAddFixedCategory = document.getElementById("settings-add-fixed-category");
   var elSettingsAddFixedName = document.getElementById("settings-add-fixed-name");
   var elSettingsAddFixedAmount = document.getElementById("settings-add-fixed-amount");
   var elSettingsAddFixedAmountPreview = document.getElementById("settings-add-fixed-amount-preview");
   var elSettingsCategoriesList = document.getElementById("settings-categories-list");
+  var elSettingsAddCategoryPanel = document.getElementById("settings-add-category-panel");
+  var elBtnSettingsShowAddCategory = document.getElementById("btn-settings-show-add-category");
+  var elBtnSettingsCancelAddCategory = document.getElementById("btn-settings-cancel-add-category");
   var elSettingsAddCategoryForm = document.getElementById("settings-add-category-form");
   var elSettingsNewCategoryLabel = document.getElementById("settings-new-category-label");
   var elSettingsNewCategoryIconSelect = document.getElementById("settings-new-category-icon-select");
@@ -1251,6 +1468,28 @@
   var elEditCategoryIconId = document.getElementById("edit-category-icon-id");
   var elEditCategorySave = document.getElementById("edit-category-save");
   var elEditCategoryCancel = document.getElementById("edit-category-cancel");
+
+  var elMonthJarsCard = document.getElementById("month-jars-card");
+  var elMonthJarsList = document.getElementById("month-jars-list");
+  var elSettingsJarsList = document.getElementById("settings-jars-list");
+  var elSettingsAddJarForm = document.getElementById("settings-add-jar-form");
+  var elSettingsNewJarLabel = document.getElementById("settings-new-jar-label");
+  var elSettingsNewJarColor = document.getElementById("settings-new-jar-color");
+  var elSettingsNewJarLimit = document.getElementById("settings-new-jar-limit");
+  var elSettingsNewJarLimitPreview = document.getElementById("settings-new-jar-limit-preview");
+  var elSettingsNewJarCategories = document.getElementById("settings-new-jar-categories");
+  var elSettingsAddJarPanel = document.getElementById("settings-add-jar-panel");
+  var elBtnSettingsShowAddJar = document.getElementById("btn-settings-show-add-jar");
+  var elBtnSettingsCancelAddJar = document.getElementById("btn-settings-cancel-add-jar");
+  var elEditJarDialog = document.getElementById("edit-jar-dialog");
+  var elEditJarBackdrop = document.getElementById("edit-jar-backdrop");
+  var elEditJarLabelInput = document.getElementById("edit-jar-label-input");
+  var elEditJarColor = document.getElementById("edit-jar-color");
+  var elEditJarLimit = document.getElementById("edit-jar-limit");
+  var elEditJarLimitPreview = document.getElementById("edit-jar-limit-preview");
+  var elEditJarCategories = document.getElementById("edit-jar-categories");
+  var elEditJarSave = document.getElementById("edit-jar-save");
+  var elEditJarCancel = document.getElementById("edit-jar-cancel");
 
   var elEditFixedDialog = document.getElementById("edit-fixed-template-dialog");
   var elEditFixedBackdrop = document.getElementById("edit-fixed-template-backdrop");
@@ -1282,6 +1521,8 @@
   var elAuthSubmit = document.getElementById("auth-submit");
   var elAuthCancel = document.getElementById("auth-cancel");
   var reportMode = "pie";
+  /** Khi báo cáo ở chế độ Hũ: null = pie tất cả hũ; id hũ hoặc CONSOLIDATED_JAR_ID = pie danh mục trong hũ */
+  var reportJarDrillId = null;
 
   function renderAuthUi() {
     if (elAuthStatusText) {
@@ -1338,7 +1579,8 @@
     if (
       (!elEditDialog || elEditDialog.hidden) &&
       (!elEditFixedDialog || elEditFixedDialog.hidden) &&
-      (!elEditCategoryDialog || elEditCategoryDialog.hidden)
+      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
+      (!elEditJarDialog || elEditJarDialog.hidden)
     ) {
       document.body.classList.remove("modal-open");
     }
@@ -1360,6 +1602,361 @@
     fillCategorySelect(elSettingsAddFixedCategory);
     fillCategorySelect(elEditFixedCategory);
     fillCategorySelect(elEditExpenseCategory);
+  }
+
+  function piggyBankUseSvg(color, size) {
+    var px = size || 40;
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "jar-pig-svg");
+    svg.setAttribute("width", String(px));
+    svg.setAttribute("height", String(px));
+    svg.setAttribute("viewBox", "0 0 512 512");
+    svg.style.color = color || "#e8a598";
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#icon-piggy-bank");
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function renderJarCategoryCheckboxes(containerEl, namePrefix, selectedIds) {
+    if (!containerEl) return;
+    var sel = {};
+    (selectedIds || []).forEach(function (id) {
+      sel[id] = true;
+    });
+    containerEl.innerHTML = "";
+    app.categories.forEach(function (c) {
+      var label = document.createElement("label");
+      label.className = "jar-cat-check-label";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.name = namePrefix;
+      cb.value = c.id;
+      cb.checked = !!sel[c.id];
+      var span = document.createElement("span");
+      span.className = "jar-cat-check-text";
+      span.textContent = iconIdToSym(c.iconId) + " " + c.label;
+      label.appendChild(cb);
+      label.appendChild(span);
+      containerEl.appendChild(label);
+    });
+  }
+
+  function readCheckedCategoryIds(containerEl) {
+    if (!containerEl) return [];
+    var out = [];
+    var inputs = containerEl.querySelectorAll('input[type="checkbox"]');
+    var i;
+    for (i = 0; i < inputs.length; i++) {
+      if (inputs[i].checked) out.push(inputs[i].value);
+    }
+    return out;
+  }
+
+  function renderSettingsJarsList() {
+    if (!elSettingsJarsList) return;
+    ensureSpendingJarsNormalized();
+    elSettingsJarsList.innerHTML = "";
+    app.spendingJars.forEach(function (j) {
+      var li = document.createElement("li");
+      li.className = "settings-jar-row";
+
+      var pic = document.createElement("div");
+      pic.className = "settings-jar-pig-wrap";
+      pic.appendChild(piggyBankUseSvg(j.color, 44));
+
+      var mid = document.createElement("div");
+      mid.className = "settings-jar-mid";
+      var title = document.createElement("span");
+      title.className = "settings-jar-title";
+      title.textContent = j.label;
+      var meta = document.createElement("span");
+      meta.className = "settings-jar-meta";
+      var limText =
+        j.limitAmount > 0
+          ? "Hạn mức " + formatMoneyVNDShort(j.limitAmount)
+          : "Chưa đặt hạn mức";
+      var nCat = (j.categoryIds || []).length;
+      meta.textContent = limText + " · " + nCat + " danh mục";
+      mid.appendChild(title);
+      mid.appendChild(meta);
+
+      var actions = document.createElement("div");
+      actions.className = "settings-jar-actions";
+      var btnEdit = document.createElement("button");
+      btnEdit.type = "button";
+      btnEdit.className = "btn-icon btn-icon-muted";
+      btnEdit.setAttribute("aria-label", "Sửa hũ");
+      btnEdit.appendChild(iconPencilSvg());
+      btnEdit.addEventListener("click", function () {
+        openEditJarDialog(j.id);
+      });
+      var btnDel = document.createElement("button");
+      btnDel.type = "button";
+      btnDel.className = "btn-icon btn-icon-danger";
+      btnDel.setAttribute("aria-label", "Xóa hũ");
+      btnDel.appendChild(iconTrashSvg());
+      btnDel.addEventListener("click", function () {
+        deleteJarFromSettings(j.id);
+      });
+      actions.appendChild(btnEdit);
+      actions.appendChild(btnDel);
+
+      li.appendChild(pic);
+      li.appendChild(mid);
+      li.appendChild(actions);
+      elSettingsJarsList.appendChild(li);
+    });
+  }
+
+  function renderNewJarCategoryCheckboxes() {
+    renderJarCategoryCheckboxes(elSettingsNewJarCategories, "jar-cat-new", []);
+  }
+
+  function resetSettingsAddJarForm() {
+    if (elSettingsNewJarLabel) elSettingsNewJarLabel.value = "";
+    if (elSettingsNewJarColor) elSettingsNewJarColor.value = "#e8a598";
+    if (elSettingsNewJarLimit) elSettingsNewJarLimit.value = "";
+    updateAmountPreview(elSettingsNewJarLimit, elSettingsNewJarLimitPreview);
+    renderNewJarCategoryCheckboxes();
+  }
+
+  function setSettingsAddJarPanelOpen(open) {
+    if (elSettingsAddJarPanel) {
+      elSettingsAddJarPanel.hidden = !open;
+      if (open) {
+        elSettingsAddJarPanel.removeAttribute("aria-hidden");
+      } else {
+        elSettingsAddJarPanel.setAttribute("aria-hidden", "true");
+      }
+    }
+    if (elBtnSettingsShowAddJar) elBtnSettingsShowAddJar.hidden = !!open;
+    if (!open) resetSettingsAddJarForm();
+  }
+
+  function resetSettingsAddCategoryForm() {
+    if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.value = "";
+    if (elSettingsNewCategoryIconSelect) elSettingsNewCategoryIconSelect.value = "food";
+    renderSettingsNewCategoryIconPicker();
+  }
+
+  function setSettingsAddCategoryPanelOpen(open) {
+    if (elSettingsAddCategoryPanel) {
+      elSettingsAddCategoryPanel.hidden = !open;
+      if (open) elSettingsAddCategoryPanel.removeAttribute("aria-hidden");
+      else elSettingsAddCategoryPanel.setAttribute("aria-hidden", "true");
+    }
+    if (elBtnSettingsShowAddCategory) elBtnSettingsShowAddCategory.hidden = !!open;
+    if (!open) resetSettingsAddCategoryForm();
+  }
+
+  function resetSettingsAddFixedForm() {
+    if (elSettingsAddFixedName) elSettingsAddFixedName.value = "";
+    if (elSettingsAddFixedAmount) elSettingsAddFixedAmount.value = "";
+    updateAmountPreview(elSettingsAddFixedAmount, elSettingsAddFixedAmountPreview);
+    refreshAllCategorySelects();
+    if (elSettingsAddFixedCategory) elSettingsAddFixedCategory.value = getFirstCategoryId();
+  }
+
+  function setSettingsAddFixedPanelOpen(open) {
+    if (elSettingsAddFixedPanel) {
+      elSettingsAddFixedPanel.hidden = !open;
+      if (open) elSettingsAddFixedPanel.removeAttribute("aria-hidden");
+      else elSettingsAddFixedPanel.setAttribute("aria-hidden", "true");
+    }
+    if (elBtnSettingsShowAddFixed) elBtnSettingsShowAddFixed.hidden = !!open;
+    if (!open) {
+      resetSettingsAddFixedForm();
+    } else {
+      refreshAllCategorySelects();
+      if (elSettingsAddFixedCategory) elSettingsAddFixedCategory.value = getFirstCategoryId();
+    }
+  }
+
+  function renderMonthSpendingJars() {
+    if (!elMonthJarsCard || !elMonthJarsList) return;
+    ensureSpendingJarsNormalized();
+    var jars = app.spendingJars || [];
+    var unclaimedIds = getUnclaimedCategoryIds();
+    var showCard = jars.length > 0 || unclaimedIds.length > 0;
+    if (!showCard) {
+      elMonthJarsCard.hidden = true;
+      return;
+    }
+    elMonthJarsCard.hidden = false;
+    elMonthJarsList.innerHTML = "";
+    if (!state) return;
+
+    function appendMonthJarRow(label, color, limitAmount, spent, categoryIds, rowClass) {
+      var li = document.createElement("li");
+      li.className = "month-jar-row" + (rowClass ? " " + rowClass : "");
+
+      var pic = document.createElement("div");
+      pic.className = "month-jar-pig-wrap";
+      pic.appendChild(piggyBankUseSvg(color, 40));
+
+      var body = document.createElement("div");
+      body.className = "month-jar-body";
+      var h = document.createElement("div");
+      h.className = "month-jar-head";
+      var name = document.createElement("span");
+      name.className = "month-jar-name";
+      name.textContent = label;
+      var amt = document.createElement("span");
+      amt.className = "month-jar-amounts";
+      if (limitAmount > 0) {
+        amt.textContent =
+          formatMoneyVNDShort(spent) + " / " + formatMoneyVNDShort(limitAmount);
+      } else {
+        amt.textContent = formatMoneyVNDShort(spent);
+      }
+      h.appendChild(name);
+      h.appendChild(amt);
+
+      var barWrap = document.createElement("div");
+      barWrap.className = "jar-progress-wrap";
+      var bar = document.createElement("div");
+      bar.className = "jar-progress-bar";
+      var fill = document.createElement("div");
+      fill.className = "jar-progress-fill";
+      if (limitAmount > 0) {
+        var pct = Math.min(100, Math.round((spent / limitAmount) * 100));
+        fill.style.width = pct + "%";
+        if (spent > limitAmount) fill.classList.add("is-over");
+      } else {
+        fill.style.width = spent > 0 ? "100%" : "0%";
+        fill.classList.add("is-neutral");
+      }
+      bar.appendChild(fill);
+      barWrap.appendChild(bar);
+
+      var cats = document.createElement("p");
+      cats.className = "month-jar-cats";
+      if (!categoryIds.length) {
+        cats.textContent = "Chưa gắn danh mục";
+      } else {
+        cats.textContent = categoryIds
+          .map(function (id) {
+            return getCategoryLabel(id);
+          })
+          .join(" · ");
+      }
+
+      body.appendChild(h);
+      body.appendChild(barWrap);
+      body.appendChild(cats);
+      li.appendChild(pic);
+      li.appendChild(body);
+      elMonthJarsList.appendChild(li);
+    }
+
+    jars.forEach(function (j) {
+      var spent = computeJarSpentForMonth(state, j);
+      appendMonthJarRow(j.label, j.color, j.limitAmount, spent, j.categoryIds || [], "");
+    });
+
+    if (unclaimedIds.length > 0) {
+      var cSpent = computeSpentForCategories(state, unclaimedIds);
+      appendMonthJarRow(
+        CONSOLIDATED_JAR_LABEL,
+        CONSOLIDATED_JAR_COLOR,
+        0,
+        cSpent,
+        unclaimedIds,
+        "month-jar-row-consolidated"
+      );
+    }
+  }
+
+  function openEditJarDialog(jarId) {
+    var j = app.spendingJars.filter(function (x) {
+      return x.id === jarId;
+    })[0];
+    if (!j || !elEditJarDialog) return;
+    closeEditCategoryDialog();
+    closeEditFixedTemplateDialog();
+    editingJarId = jarId;
+    if (elEditJarLabelInput) elEditJarLabelInput.value = j.label;
+    if (elEditJarColor) elEditJarColor.value = j.color;
+    if (elEditJarLimit) elEditJarLimit.value = formatAsNganDisplay(j.limitAmount);
+    updateAmountPreview(elEditJarLimit, elEditJarLimitPreview);
+    renderJarCategoryCheckboxes(elEditJarCategories, "jar-cat-edit", j.categoryIds || []);
+    elEditJarDialog.hidden = false;
+    elEditJarDialog.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    setTimeout(function () {
+      if (elEditJarLabelInput) elEditJarLabelInput.focus();
+    }, 0);
+  }
+
+  function closeEditJarDialog() {
+    editingJarId = null;
+    if (elEditJarDialog) {
+      elEditJarDialog.hidden = true;
+      elEditJarDialog.setAttribute("aria-hidden", "true");
+    }
+    if (
+      (!elEditDialog || elEditDialog.hidden) &&
+      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
+      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
+      (!elAuthDialog || elAuthDialog.hidden)
+    ) {
+      document.body.classList.remove("modal-open");
+    }
+  }
+
+  function saveEditJarDialog() {
+    if (!editingJarId) return;
+    var j = app.spendingJars.filter(function (x) {
+      return x.id === editingJarId;
+    })[0];
+    if (!j) {
+      closeEditJarDialog();
+      return;
+    }
+    var label = elEditJarLabelInput ? elEditJarLabelInput.value.trim() : "";
+    if (!label) {
+      if (elEditJarLabelInput) elEditJarLabelInput.focus();
+      return;
+    }
+    if (label.length > 40) label = label.slice(0, 40);
+    var limitVnd = parseMoneyToVND(elEditJarLimit ? elEditJarLimit.value : "0");
+    if (limitVnd < 0) limitVnd = 0;
+    var catIds = readCheckedCategoryIds(elEditJarCategories).filter(categoryIdExists);
+    if (!catIds.length) {
+      window.alert("Chọn ít nhất một danh mục cho hũ.");
+      return;
+    }
+    reserveCategoriesForJar(j.id, catIds);
+    j.label = label;
+    j.color = normalizeHexColor(elEditJarColor ? elEditJarColor.value : j.color);
+    j.limitAmount = limitVnd;
+    j.categoryIds = catIds;
+    j.updatedAt = nowTs();
+    dedupeJarCategoriesExclusive();
+    saveAppData();
+    closeEditJarDialog();
+    renderSettingsJarsList();
+    renderNewJarCategoryCheckboxes();
+    if (activeMonthKey && state) persistAndRender();
+  }
+
+  function deleteJarFromSettings(jarId) {
+    if (
+      !confirm(
+        "Xóa hũ này? Các khoản chi đã nhập không bị xóa; chỉ bỏ nhóm thống kê theo hũ."
+      )
+    ) {
+      return;
+    }
+    var next = app.spendingJars.filter(function (j) {
+      return j.id !== jarId;
+    });
+    if (next.length === app.spendingJars.length) return;
+    app.spendingJars = next;
+    saveAppData();
+    renderSettingsJarsList();
+    if (activeMonthKey && state) persistAndRender();
   }
 
   function renderIconPicker(containerEl, hiddenEl, selectedId) {
@@ -1477,6 +2074,7 @@
     });
     var toId = rest[0] ? rest[0].id : getFirstCategoryId();
     reassignCategoryEverywhere(id, toId);
+    remapCategoryInJars(id, toId);
     app.categories = rest;
     saveAppData();
     refreshAllCategorySelects();
@@ -1499,7 +2097,8 @@
     if (
       (!elEditDialog || elEditDialog.hidden) &&
       (!elEditFixedDialog || elEditFixedDialog.hidden) &&
-      (!elAuthDialog || elAuthDialog.hidden)
+      (!elAuthDialog || elAuthDialog.hidden) &&
+      (!elEditJarDialog || elEditJarDialog.hidden)
     ) {
       document.body.classList.remove("modal-open");
     }
@@ -1508,6 +2107,7 @@
   function openEditCategoryDialog(catId) {
     var c = findCategory(catId);
     if (!c || !elEditCategoryDialog) return;
+    closeEditJarDialog();
     editingCategoryId = catId;
     if (elEditCategoryLabelInput) elEditCategoryLabelInput.value = c.label;
     renderIconPicker(elEditCategoryIcons, elEditCategoryIconId, c.iconId);
@@ -1727,14 +2327,17 @@
     );
   }
 
-  function renderPieChart() {
-    if (!elPieBody || !elPieSlices || !elPieLegend || !state) return;
-    var byCat = totalsByCategory();
-    var segments = [];
-    app.categories.forEach(function (c) {
-      var amt = byCat[c.id] || 0;
-      if (amt > 0) segments.push({ id: c.id, label: c.label, amount: amt });
-    });
+  function sliceFillAt(i, seg) {
+    return seg.fill || PIE_COLORS[i % PIE_COLORS.length];
+  }
+
+  /**
+   * segments: { id, label, amount, fill? }[]
+   * onSegmentClick: null hoặc function (seg) — dùng cho pie hũ (mở chi tiết)
+   */
+  function renderPieChartFromSegments(segments, accessibleTitle, onSegmentClick) {
+    if (!elPieBody || !elPieSlices || !elPieLegend) return;
+
     var total = segments.reduce(function (s, x) {
       return s + x.amount;
     }, 0);
@@ -1744,6 +2347,7 @@
       elPieBody.hidden = true;
       elPieSlices.innerHTML = "";
       elPieLegend.innerHTML = "";
+      if (elPieTitle) elPieTitle.textContent = accessibleTitle || "Biểu đồ";
       return;
     }
 
@@ -1757,13 +2361,27 @@
     elPieSlices.innerHTML = "";
 
     if (segments.length === 1) {
+      var seg0 = segments[0];
       var circ = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       circ.setAttribute("cx", String(cx));
       circ.setAttribute("cy", String(cy));
       circ.setAttribute("r", String(r));
-      circ.setAttribute("fill", PIE_COLORS[0]);
+      circ.setAttribute("fill", sliceFillAt(0, seg0));
       circ.setAttribute("stroke", stroke);
       circ.setAttribute("stroke-width", "2");
+      if (onSegmentClick) {
+        circ.classList.add("pie-slice-interactive");
+        circ.setAttribute("tabindex", "0");
+        circ.addEventListener("click", function () {
+          onSegmentClick(seg0);
+        });
+        circ.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            onSegmentClick(seg0);
+          }
+        });
+      }
       elPieSlices.appendChild(circ);
     } else {
       var start = -Math.PI / 2;
@@ -1774,10 +2392,23 @@
         start = a1;
         var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", pieSlicePath(cx, cy, r, a0, a1));
-        path.setAttribute("fill", PIE_COLORS[i % PIE_COLORS.length]);
+        path.setAttribute("fill", sliceFillAt(i, seg));
         path.setAttribute("stroke", stroke);
         path.setAttribute("stroke-width", "2");
         path.setAttribute("stroke-linejoin", "round");
+        if (onSegmentClick) {
+          path.classList.add("pie-slice-interactive");
+          path.setAttribute("tabindex", "0");
+          path.addEventListener("click", function () {
+            onSegmentClick(seg);
+          });
+          path.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" || ev.key === " ") {
+              ev.preventDefault();
+              onSegmentClick(seg);
+            }
+          });
+        }
         elPieSlices.appendChild(path);
       });
     }
@@ -1786,10 +2417,12 @@
     segments.forEach(function (seg, i) {
       var pct = total > 0 ? Math.round((seg.amount / total) * 1000) / 10 : 0;
       var li = document.createElement("li");
-      li.className = "pie-legend-item";
+      li.className =
+        "pie-legend-item" +
+        (onSegmentClick ? " pie-legend-item-interactive" : "");
       var dot = document.createElement("span");
       dot.className = "pie-legend-dot";
-      dot.style.background = PIE_COLORS[i % PIE_COLORS.length];
+      dot.style.background = sliceFillAt(i, seg);
       dot.setAttribute("aria-hidden", "true");
       var text = document.createElement("span");
       text.className = "pie-legend-text";
@@ -1800,6 +2433,18 @@
         formatMoneyVND(seg.amount) + " · " + pct + "%";
       li.appendChild(dot);
       li.appendChild(text);
+      if (onSegmentClick) {
+        li.setAttribute("tabindex", "0");
+        li.addEventListener("click", function () {
+          onSegmentClick(seg);
+        });
+        li.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            onSegmentClick(seg);
+          }
+        });
+      }
       elPieLegend.appendChild(li);
     });
 
@@ -1807,7 +2452,123 @@
       var parts = segments.map(function (s) {
         return s.label + " " + Math.round((s.amount / total) * 100) + "%";
       });
-      elPieTitle.textContent = "Chi tiêu theo danh mục: " + parts.join(", ");
+      elPieTitle.textContent = accessibleTitle + ": " + parts.join(", ");
+    }
+  }
+
+  function renderCategoryPieChart() {
+    if (!state) return;
+    var byCat = totalsByCategory();
+    var segments = [];
+    app.categories.forEach(function (c) {
+      var amt = byCat[c.id] || 0;
+      if (amt > 0) segments.push({ id: c.id, label: c.label, amount: amt });
+    });
+    renderPieChartFromSegments(segments, "Chi tiêu theo danh mục", null);
+  }
+
+  function renderJarPieChart() {
+    if (!elPieBody || !elPieSlices || !elPieLegend || !state) return;
+    ensureSpendingJarsNormalized();
+    var byCat = totalsByCategory();
+
+    function openJarDrill(seg) {
+      reportJarDrillId = seg.id;
+      renderReportModeButtons();
+      renderPieChart();
+    }
+
+    if (reportJarDrillId) {
+      if (
+        reportJarDrillId !== CONSOLIDATED_JAR_ID &&
+        !findSpendingJar(reportJarDrillId)
+      ) {
+        reportJarDrillId = null;
+        renderJarPieChart();
+        return;
+      }
+      var categorySegments = [];
+      if (reportJarDrillId === CONSOLIDATED_JAR_ID) {
+        getUnclaimedCategoryIds().forEach(function (cid) {
+          var amt = byCat[cid] || 0;
+          if (amt > 0) {
+            var catRow = findCategory(cid);
+            categorySegments.push({
+              id: cid,
+              label: catRow ? catRow.label : getCategoryLabel(cid),
+              amount: amt,
+            });
+          }
+        });
+      } else {
+        var jar = findSpendingJar(reportJarDrillId);
+        if (!jar) {
+          reportJarDrillId = null;
+          renderJarPieChart();
+          return;
+        }
+        (jar.categoryIds || []).forEach(function (cid) {
+          var amt = byCat[cid] || 0;
+          if (amt > 0) {
+            var catRow = findCategory(cid);
+            categorySegments.push({
+              id: cid,
+              label: catRow ? catRow.label : getCategoryLabel(cid),
+              amount: amt,
+            });
+          }
+        });
+      }
+      var jarTitle =
+        reportJarDrillId === CONSOLIDATED_JAR_ID
+          ? CONSOLIDATED_JAR_LABEL
+          : findSpendingJar(reportJarDrillId)
+          ? findSpendingJar(reportJarDrillId).label
+          : "";
+      renderPieChartFromSegments(
+        categorySegments,
+        "Hũ «" + jarTitle + "» — theo danh mục",
+        null
+      );
+      return;
+    }
+
+    var segments = [];
+    (app.spendingJars || []).forEach(function (j) {
+      var spent = computeJarSpentForMonth(state, j);
+      if (spent > 0) {
+        segments.push({
+          id: j.id,
+          label: j.label,
+          amount: spent,
+          fill: j.color,
+        });
+      }
+    });
+    var unclaimed = getUnclaimedCategoryIds();
+    if (unclaimed.length) {
+      var cSpent = computeSpentForCategories(state, unclaimed);
+      if (cSpent > 0) {
+        segments.push({
+          id: CONSOLIDATED_JAR_ID,
+          label: CONSOLIDATED_JAR_LABEL,
+          amount: cSpent,
+          fill: CONSOLIDATED_JAR_COLOR,
+        });
+      }
+    }
+
+    renderPieChartFromSegments(segments, "Chi tiêu theo hũ", openJarDrill);
+  }
+
+  function renderPieChart() {
+    if (!elPieBody || !elPieSlices || !elPieLegend || !state) return;
+    if (reportMode === "pie") {
+      renderCategoryPieChart();
+      return;
+    }
+    if (reportMode === "jars") {
+      renderJarPieChart();
     }
   }
 
@@ -1915,41 +2676,6 @@
       var preset = THEME_PRESETS[mode] || THEME_PRESETS.dark;
       elSettingsThemePreview.style.background =
         "linear-gradient(135deg, " + preset.appBg + " 0%, " + preset.accent + " 100%)";
-    }
-  }
-
-  function renderBreakdown() {
-    elBreakdown.innerHTML = "";
-    if (!state) return;
-    var byCat = totalsByCategory();
-    app.categories.forEach(function (c) {
-      var amt = byCat[c.id] || 0;
-      if (amt === 0) return;
-      var li = document.createElement("li");
-      li.className = "breakdown-item";
-      var icon = document.createElement("span");
-      icon.className = "breakdown-icon";
-      icon.textContent = iconIdToSym(c.iconId);
-      icon.setAttribute("aria-hidden", "true");
-      var mid = document.createElement("span");
-      mid.className = "breakdown-mid";
-      var lab = document.createElement("span");
-      lab.className = "label";
-      lab.textContent = c.label;
-      mid.appendChild(lab);
-      var am = document.createElement("span");
-      am.className = "amount";
-      am.textContent = formatMoneyVND(amt);
-      li.appendChild(icon);
-      li.appendChild(mid);
-      li.appendChild(am);
-      elBreakdown.appendChild(li);
-    });
-    if (!elBreakdown.children.length) {
-      var empty = document.createElement("li");
-      empty.className = "breakdown-item breakdown-empty";
-      empty.textContent = "Chưa có chi theo danh mục.";
-      elBreakdown.appendChild(empty);
     }
   }
 
@@ -2256,8 +2982,8 @@
 
   function renderReportModeButtons() {
     var map = [
-      { key: "breakdown", el: elReportModeBreakdown },
       { key: "pie", el: elReportModePie },
+      { key: "jars", el: elReportModeJars },
     ];
     map.forEach(function (x) {
       if (!x.el) return;
@@ -2265,14 +2991,32 @@
       x.el.classList.toggle("is-active", active);
       x.el.setAttribute("aria-pressed", active ? "true" : "false");
     });
-    if (elReportBreakdownView) elReportBreakdownView.hidden = reportMode !== "breakdown";
-    if (elReportPieView) elReportPieView.hidden = reportMode !== "pie";
+    if (elReportPieView)
+      elReportPieView.hidden = reportMode !== "pie" && reportMode !== "jars";
+    if (elReportJarPieToolbar) {
+      elReportJarPieToolbar.hidden = reportMode !== "jars";
+    }
+    if (elReportJarPieBack) {
+      elReportJarPieBack.hidden = reportMode !== "jars" || !reportJarDrillId;
+    }
+    if (elReportJarPieHint) {
+      if (reportMode === "jars" && !reportJarDrillId) {
+        elReportJarPieHint.textContent =
+          "Chọn một phần biểu đồ hoặc mục chú giải để xem chi tiết theo danh mục trong hũ.";
+        elReportJarPieHint.hidden = false;
+      } else {
+        elReportJarPieHint.textContent = "";
+        elReportJarPieHint.hidden = true;
+      }
+    }
   }
 
   function setReportMode(next) {
-    if (next !== "breakdown" && next !== "pie") return;
+    if (next !== "pie" && next !== "jars") return;
+    if (next !== "jars") reportJarDrillId = null;
     reportMode = next;
     renderReportModeButtons();
+    renderPieChart();
   }
 
   function scrollAndHighlightExpenseRow(expenseId) {
@@ -2293,16 +3037,17 @@
     if (!activeMonthKey || !state) return;
     saveAppData();
     renderSummary();
-    renderBreakdown();
     renderExpenseList();
     renderPieChart();
     renderReportModeButtons();
     renderFixedTemplatesList();
+    renderMonthSpendingJars();
     if (elSideMenu && !elSideMenu.hidden) {
       renderSideMenuList();
     }
     if (elViewSettings && !elViewSettings.hidden) {
       renderSettingsCategoriesList();
+      renderSettingsJarsList();
     }
   }
 
@@ -2729,6 +3474,7 @@
     closeEditExpenseDialog();
     closeEditFixedTemplateDialog();
     closeEditCategoryDialog();
+    closeEditJarDialog();
     if (elSettingsDefaultLimit) {
       elSettingsDefaultLimit.value = formatAsNganDisplay(getDefaultMonthlyLimit());
       updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
@@ -2737,6 +3483,10 @@
     renderFixedTemplatesList();
     renderSettingsCategoriesList();
     renderSettingsNewCategoryIconPicker();
+    renderSettingsJarsList();
+    setSettingsAddJarPanelOpen(false);
+    setSettingsAddCategoryPanelOpen(false);
+    setSettingsAddFixedPanelOpen(false);
     showSettingsView();
     setTimeout(function () {
       if (elBtnCloseSettings) elBtnCloseSettings.focus();
@@ -2764,6 +3514,7 @@
     }
     syncFixedIntoMonth(state);
     activeMonthKey = key;
+    reportJarDrillId = null;
 
     elMonthScreenTitle.textContent = formatMonthKeyVi(key);
 
@@ -2914,14 +3665,22 @@
       renderExpenseList();
     });
   }
-  if (elReportModeBreakdown) {
-    elReportModeBreakdown.addEventListener("click", function () {
-      setReportMode("breakdown");
-    });
-  }
   if (elReportModePie) {
     elReportModePie.addEventListener("click", function () {
       setReportMode("pie");
+    });
+  }
+  if (elReportModeJars) {
+    elReportModeJars.addEventListener("click", function () {
+      setReportMode("jars");
+    });
+  }
+  if (elReportJarPieBack) {
+    elReportJarPieBack.addEventListener("click", function () {
+      if (reportMode !== "jars") return;
+      reportJarDrillId = null;
+      renderReportModeButtons();
+      renderPieChart();
     });
   }
 
@@ -2966,17 +3725,105 @@
         normalizeCategoryRow({ id: catUid(), label: lab, iconId: iconId })
       );
       saveAppData();
-      if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.value = "";
       renderSettingsCategoriesList();
-      renderSettingsNewCategoryIconPicker();
+      renderNewJarCategoryCheckboxes();
       refreshAllCategorySelects();
       if (activeMonthKey && state) persistAndRender();
+      setSettingsAddCategoryPanelOpen(false);
     });
   }
   if (elSettingsNewCategoryIconSelect) {
     elSettingsNewCategoryIconSelect.addEventListener("change", function () {
       var selected = ICON_PRESET_NAMES[elSettingsNewCategoryIconSelect.value] || "Biểu tượng";
       elSettingsNewCategoryIconSelect.title = "Biểu tượng: " + selected;
+    });
+  }
+
+  if (elSettingsAddJarForm) {
+    elSettingsAddJarForm.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var lab = elSettingsNewJarLabel ? elSettingsNewJarLabel.value.trim() : "";
+      if (!lab) {
+        if (elSettingsNewJarLabel) elSettingsNewJarLabel.focus();
+        return;
+      }
+      if (lab.length > 40) lab = lab.slice(0, 40);
+      var limitVnd = parseMoneyToVND(elSettingsNewJarLimit ? elSettingsNewJarLimit.value : "0");
+      if (limitVnd <= 0) {
+        if (elSettingsNewJarLimit) elSettingsNewJarLimit.focus();
+        return;
+      }
+      var catIds = readCheckedCategoryIds(elSettingsNewJarCategories).filter(categoryIdExists);
+      if (!catIds.length) {
+        window.alert("Chọn ít nhất một danh mục cho hũ.");
+        return;
+      }
+      var newId = "jar-" + uid();
+      reserveCategoriesForJar(newId, catIds);
+      app.spendingJars.push(
+        normalizeSpendingJarRow({
+          id: newId,
+          label: lab,
+          color: normalizeHexColor(elSettingsNewJarColor ? elSettingsNewJarColor.value : "#e8a598"),
+          limitAmount: limitVnd,
+          categoryIds: catIds,
+          updatedAt: nowTs(),
+        })
+      );
+      saveAppData();
+      renderSettingsJarsList();
+      setSettingsAddJarPanelOpen(false);
+      if (activeMonthKey && state) persistAndRender();
+    });
+  }
+  if (elBtnSettingsShowAddJar) {
+    elBtnSettingsShowAddJar.addEventListener("click", function () {
+      setSettingsAddJarPanelOpen(true);
+      setTimeout(function () {
+        if (elSettingsNewJarLabel) elSettingsNewJarLabel.focus();
+      }, 0);
+    });
+  }
+  if (elBtnSettingsCancelAddJar) {
+    elBtnSettingsCancelAddJar.addEventListener("click", function () {
+      setSettingsAddJarPanelOpen(false);
+    });
+  }
+  if (elBtnSettingsShowAddCategory) {
+    elBtnSettingsShowAddCategory.addEventListener("click", function () {
+      setSettingsAddCategoryPanelOpen(true);
+      setTimeout(function () {
+        if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.focus();
+      }, 0);
+    });
+  }
+  if (elBtnSettingsCancelAddCategory) {
+    elBtnSettingsCancelAddCategory.addEventListener("click", function () {
+      setSettingsAddCategoryPanelOpen(false);
+    });
+  }
+  if (elBtnSettingsShowAddFixed) {
+    elBtnSettingsShowAddFixed.addEventListener("click", function () {
+      setSettingsAddFixedPanelOpen(true);
+      setTimeout(function () {
+        if (elSettingsAddFixedCategory) elSettingsAddFixedCategory.focus();
+      }, 0);
+    });
+  }
+  if (elBtnSettingsCancelAddFixed) {
+    elBtnSettingsCancelAddFixed.addEventListener("click", function () {
+      setSettingsAddFixedPanelOpen(false);
+    });
+  }
+  if (elEditJarSave) elEditJarSave.addEventListener("click", saveEditJarDialog);
+  if (elEditJarCancel) elEditJarCancel.addEventListener("click", closeEditJarDialog);
+  if (elEditJarBackdrop) elEditJarBackdrop.addEventListener("click", closeEditJarDialog);
+  if (elEditJarLimit) {
+    elEditJarLimit.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveEditJarDialog();
+      }
     });
   }
 
@@ -3008,13 +3855,11 @@
       amount: amount,
       updatedAt: nowTs(),
     });
-    elSettingsAddFixedName.value = "";
-    elSettingsAddFixedAmount.value = "";
-    updateAmountPreview(elSettingsAddFixedAmount, elSettingsAddFixedAmountPreview);
     saveAppData();
     if (state) syncFixedIntoMonth(state);
     renderFixedTemplatesList();
     if (activeMonthKey && state) persistAndRender();
+    setSettingsAddFixedPanelOpen(false);
   });
 
   elEditFixedSave.addEventListener("click", saveEditFixedTemplateDialog);
@@ -3032,6 +3877,7 @@
     cancelLimitEdit();
     closeEditFixedTemplateDialog();
     closeEditCategoryDialog();
+    closeEditJarDialog();
     var e = state.expenses.find(function (x) {
       return x.id === expenseId;
     });
@@ -3071,7 +3917,8 @@
     if (
       (!elEditFixedDialog || elEditFixedDialog.hidden) &&
       (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
-      (!elAuthDialog || elAuthDialog.hidden)
+      (!elAuthDialog || elAuthDialog.hidden) &&
+      (!elEditJarDialog || elEditJarDialog.hidden)
     ) {
       document.body.classList.remove("modal-open");
     }
@@ -3086,7 +3933,8 @@
     if (
       (!elEditDialog || elEditDialog.hidden) &&
       (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
-      (!elAuthDialog || elAuthDialog.hidden)
+      (!elAuthDialog || elAuthDialog.hidden) &&
+      (!elEditJarDialog || elEditJarDialog.hidden)
     ) {
       document.body.classList.remove("modal-open");
     }
@@ -3094,6 +3942,7 @@
 
   function openEditFixedTemplateDialog(templateId) {
     closeEditCategoryDialog();
+    closeEditJarDialog();
     var t = findFixedTemplate(templateId);
     if (!t || !elEditFixedDialog) return;
     editingFixedTemplateId = templateId;
@@ -3175,6 +4024,11 @@
       if (isLimitEditOpen()) {
         ev.preventDefault();
         cancelLimitEdit();
+        return;
+      }
+      if (elEditJarDialog && !elEditJarDialog.hidden) {
+        ev.preventDefault();
+        closeEditJarDialog();
         return;
       }
       if (elEditCategoryDialog && !elEditCategoryDialog.hidden) {
@@ -3326,6 +4180,8 @@
   bindAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
   bindAmountPreview(elSettingsAddFixedAmount, elSettingsAddFixedAmountPreview);
   bindAmountPreview(elEditFixedAmount, elEditFixedAmountPreview);
+  bindAmountPreview(elSettingsNewJarLimit, elSettingsNewJarLimitPreview);
+  bindAmountPreview(elEditJarLimit, elEditJarLimitPreview);
 
   if (hasInvalidThangParam()) {
     try {
