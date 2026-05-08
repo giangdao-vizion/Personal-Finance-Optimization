@@ -211,6 +211,13 @@
             </details>
           </div>
         </div>
+        <details class="field" id="expense-advanced-section">
+          <summary class="field-label">Nâng cao</summary>
+          <label class="field">
+            <span class="field-label">Ngày chi</span>
+            <input type="date" id="expense-date" />
+          </label>
+        </details>
         <button type="submit" class="btn btn-primary btn-block">Lưu khoản chi</button>
       </form>
       </div>
@@ -253,6 +260,7 @@
         <div class="report-mode-bar" role="tablist" aria-label="Chế độ báo cáo phân bổ">
           <button type="button" id="report-mode-pie" class="expense-filter-btn is-active" aria-pressed="true">Biểu đồ</button>
           <button type="button" id="report-mode-jars" class="expense-filter-btn" aria-pressed="false">Hũ</button>
+          <button type="button" id="report-mode-daily" class="expense-filter-btn" aria-pressed="false">Theo ngày</button>
         </div>
         <div id="report-pie-view" class="report-view">
           <div id="report-jar-pie-toolbar" class="report-jar-pie-toolbar" hidden>
@@ -275,6 +283,18 @@
                 <g id="expense-pie-slices"></g>
               </svg>
               <ul id="expense-pie-legend" class="pie-legend"></ul>
+            </div>
+          </div>
+        </div>
+        <div id="report-daily-view" class="report-view" hidden>
+          <div class="report-mode-bar report-daily-range-bar" role="tablist" aria-label="Khoảng thời gian báo cáo theo ngày">
+            <button type="button" id="report-daily-range-month" class="expense-filter-btn is-active" aria-pressed="true">Tháng này</button>
+            <button type="button" id="report-daily-range-7days" class="expense-filter-btn" aria-pressed="false">7 ngày</button>
+          </div>
+          <p id="report-daily-empty" class="pie-chart-empty" hidden>Chưa có khoản chi trong khoảng thời gian này.</p>
+          <div id="report-daily-scroll" class="report-daily-scroll" hidden>
+            <div id="report-daily-bars" class="report-daily-bars" role="img" aria-label="Biểu đồ cột chi tiêu theo ngày">
+              <svg id="report-daily-trend" class="report-daily-trend" aria-hidden="true"></svg>
             </div>
           </div>
         </div>
@@ -592,7 +612,7 @@
   <div id="edit-expense-dialog" class="modal" hidden aria-hidden="true">
     <div class="modal-backdrop" id="edit-expense-backdrop" tabindex="-1"></div>
     <div
-      class="modal-panel modal-panel-overflow-visible"
+      class="modal-panel"
       role="dialog"
       aria-modal="true"
       aria-labelledby="edit-expense-title"
@@ -616,6 +636,10 @@
           <span id="edit-expense-amount-preview" class="amount-preview" hidden aria-hidden="true"></span>
           <input type="text" id="edit-expense-amount" class="amount-input" inputmode="decimal" autocomplete="off" />
         </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Ngày chi</span>
+        <input type="date" id="edit-expense-date" />
       </label>
       <div class="field field-checkbox-expense field-checkbox-inline">
         <label class="checkbox-row">

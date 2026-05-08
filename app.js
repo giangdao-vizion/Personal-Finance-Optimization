@@ -1392,6 +1392,7 @@
   var elAmount = document.getElementById("expense-amount");
   var elExpensePreview = document.getElementById("expense-amount-preview");
   var elForm = document.getElementById("expense-form");
+  var elExpenseDate = document.getElementById("expense-date");
   var elExpenseFixed = document.getElementById("expense-fixed");
   var elExpenseList = document.getElementById("expense-list");
   var elEmpty = document.getElementById("empty-state");
@@ -1400,10 +1401,18 @@
   var elExpenseFilterFlex = document.getElementById("expense-filter-flex");
   var elReportModePie = document.getElementById("report-mode-pie");
   var elReportModeJars = document.getElementById("report-mode-jars");
+  var elReportModeDaily = document.getElementById("report-mode-daily");
   var elReportJarPieToolbar = document.getElementById("report-jar-pie-toolbar");
   var elReportJarPieBack = document.getElementById("report-jar-pie-back");
   var elReportJarPieHint = document.getElementById("report-jar-pie-hint");
   var elReportPieView = document.getElementById("report-pie-view");
+  var elReportDailyView = document.getElementById("report-daily-view");
+  var elReportDailyRangeMonth = document.getElementById("report-daily-range-month");
+  var elReportDailyRange7Days = document.getElementById("report-daily-range-7days");
+  var elReportDailyEmpty = document.getElementById("report-daily-empty");
+  var elReportDailyScroll = document.getElementById("report-daily-scroll");
+  var elReportDailyBars = document.getElementById("report-daily-bars");
+  var elReportDailyTrend = document.getElementById("report-daily-trend");
   var elSumIncome = document.getElementById("sum-income");
   var elSumExpenses = document.getElementById("sum-expenses");
   var elSumBalance = document.getElementById("sum-balance");
@@ -1506,6 +1515,7 @@
   var elEditExpenseName = document.getElementById("edit-expense-name");
   var elEditAmount = document.getElementById("edit-expense-amount");
   var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
+  var elEditExpenseDate = document.getElementById("edit-expense-date");
   var elEditExpenseFixed = document.getElementById("edit-expense-fixed");
   var elEditTemplateNote = document.getElementById("edit-expense-template-note");
   var elEditSave = document.getElementById("edit-expense-save");
@@ -1518,6 +1528,8 @@
   var elAuthSubmit = document.getElementById("auth-submit");
   var elAuthCancel = document.getElementById("auth-cancel");
   var reportMode = "pie";
+  var reportDailyRange = "month";
+  var reportDailyNeedsAutoScroll = true;
   /** Khi báo cáo ở chế độ Hũ: null = pie tất cả hũ; id hũ hoặc CONSOLIDATED_JAR_ID = pie danh mục trong hũ */
   var reportJarDrillId = null;
 
@@ -2233,6 +2245,9 @@
       amount: typeof row.amount === "number" && row.amount >= 0 ? Math.round(row.amount) : 0,
       updatedAt: updatedAt,
     };
+    if (typeof row.dateTs === "number" && row.dateTs > 0) {
+      o.dateTs = Math.round(row.dateTs);
+    }
     if (row.templateId) o.templateId = row.templateId;
     if (typeof row.deletedAt === "number" && row.deletedAt > 0) {
       o.deletedAt = Math.round(row.deletedAt);
@@ -2671,6 +2686,227 @@
     return { days: days, weeks: weeks };
   }
 
+  function dayKeyFromTs(ts) {
+    if (typeof ts !== "number" || ts <= 0) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    return (
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0")
+    );
+  }
+
+  function dayLabelFromKey(key) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ""));
+    if (!m) return key || "";
+    return m[3] + "/" + m[2];
+  }
+
+  function dateFromDayKey(key) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ""));
+    if (!m) return null;
+    var y = parseInt(m[1], 10);
+    var mo = parseInt(m[2], 10);
+    var d = parseInt(m[3], 10);
+    var out = new Date(y, mo - 1, d);
+    if (
+      out.getFullYear() !== y ||
+      out.getMonth() !== mo - 1 ||
+      out.getDate() !== d
+    ) {
+      return null;
+    }
+    return out;
+  }
+
+  function dayKeyShift(baseKey, deltaDays) {
+    var d = dateFromDayKey(baseKey);
+    if (!d) return "";
+    d.setDate(d.getDate() + deltaDays);
+    return dayKeyFromTs(d.getTime());
+  }
+
+  function sumExpensesByDay() {
+    var map = {};
+    if (!state || !Array.isArray(state.expenses)) return map;
+    state.expenses.forEach(function (e) {
+      if (isRowDeleted(e)) return;
+      var key = dayKeyFromTs(expenseDateTs(e));
+      if (!key) return;
+      if (!map[key]) map[key] = 0;
+      map[key] += typeof e.amount === "number" && e.amount > 0 ? e.amount : 0;
+    });
+    return map;
+  }
+
+  function monthDayKeys(monthKey) {
+    var p = parseMonthKeyParts(monthKey);
+    if (!p) return [];
+    var days = new Date(p.year, p.month, 0).getDate();
+    var out = [];
+    var i;
+    for (i = 1; i <= days; i++) {
+      out.push(
+        p.year +
+          "-" +
+          String(p.month).padStart(2, "0") +
+          "-" +
+          String(i).padStart(2, "0")
+      );
+    }
+    return out;
+  }
+
+  function recentDayKeysFromAnchor(anchorKey, count) {
+    var out = [];
+    var i;
+    for (i = count - 1; i >= 0; i--) {
+      out.push(dayKeyShift(anchorKey, -i));
+    }
+    return out;
+  }
+
+  function renderReportDailyRangeButtons() {
+    var map = [
+      { key: "month", el: elReportDailyRangeMonth },
+      { key: "7days", el: elReportDailyRange7Days },
+    ];
+    map.forEach(function (x) {
+      if (!x.el) return;
+      var active = reportDailyRange === x.key;
+      x.el.classList.toggle("is-active", active);
+      x.el.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function renderDailyReportChart() {
+    if (!elReportDailyBars || !elReportDailyScroll || !elReportDailyEmpty) return;
+    var oldCols = elReportDailyBars.querySelectorAll(".report-day-col");
+    var ci;
+    for (ci = 0; ci < oldCols.length; ci++) oldCols[ci].remove();
+    var byDay = sumExpensesByDay();
+    var keys = [];
+    if (reportDailyRange === "7days") {
+      var maxDayKey = dayKeyFromTs(nowTs());
+      keys = recentDayKeysFromAnchor(maxDayKey, 7);
+    } else {
+      keys = monthDayKeys(activeMonthKey);
+    }
+    if (!keys.length) {
+      if (elReportDailyTrend) elReportDailyTrend.innerHTML = "";
+      elReportDailyScroll.hidden = true;
+      elReportDailyEmpty.hidden = false;
+      return;
+    }
+    var maxAmount = keys.reduce(function (max, key) {
+      return Math.max(max, byDay[key] || 0);
+    }, 0);
+    if (elReportDailyTrend) elReportDailyTrend.innerHTML = "";
+    keys.forEach(function (key) {
+      var amount = byDay[key] || 0;
+      var col = document.createElement("div");
+      col.className = "report-day-col";
+
+      var barWrap = document.createElement("div");
+      barWrap.className = "report-day-bar-wrap";
+
+      var bar = document.createElement("div");
+      bar.className = "report-day-bar";
+      var h = maxAmount > 0 ? Math.max(2, Math.round((amount / maxAmount) * 100)) : 2;
+      bar.style.height = h + "%";
+      bar.title = dayLabelFromKey(key) + ": " + formatMoneyVND(amount);
+      barWrap.appendChild(bar);
+
+      var amountEl = document.createElement("span");
+      amountEl.className = "report-day-amount";
+      amountEl.textContent = amount > 0 ? formatMoneyListShort(amount) : "0";
+
+      var label = document.createElement("span");
+      label.className = "report-day-label";
+      label.textContent = dayLabelFromKey(key);
+
+      col.appendChild(barWrap);
+      col.appendChild(amountEl);
+      col.appendChild(label);
+      elReportDailyBars.appendChild(col);
+    });
+    requestAnimationFrame(drawDailyTrendLine);
+    elReportDailyEmpty.hidden = false;
+    if (Object.keys(byDay).some(function (k) { return keys.indexOf(k) !== -1 && byDay[k] > 0; })) {
+      elReportDailyEmpty.hidden = true;
+    } else {
+      elReportDailyEmpty.hidden = false;
+      elReportDailyEmpty.textContent = "Chưa có khoản chi trong khoảng thời gian này.";
+    }
+    elReportDailyScroll.hidden = false;
+    if (reportDailyNeedsAutoScroll) {
+      requestAnimationFrame(function () {
+        elReportDailyScroll.scrollLeft = elReportDailyScroll.scrollWidth;
+      });
+      reportDailyNeedsAutoScroll = false;
+    }
+  }
+
+  function drawDailyTrendLine() {
+    if (!elReportDailyBars || !elReportDailyTrend) return;
+    var cols = elReportDailyBars.querySelectorAll(".report-day-col");
+    if (!cols || cols.length < 2) {
+      elReportDailyTrend.innerHTML = "";
+      return;
+    }
+    var hostRect = elReportDailyBars.getBoundingClientRect();
+    if (!hostRect.width || !hostRect.height) {
+      elReportDailyTrend.innerHTML = "";
+      return;
+    }
+    var points = [];
+    var i;
+    for (i = 0; i < cols.length; i++) {
+      var bar = cols[i].querySelector(".report-day-bar");
+      if (!bar) continue;
+      var barRect = bar.getBoundingClientRect();
+      var x = barRect.left - hostRect.left + barRect.width / 2;
+      var y = barRect.top - hostRect.top;
+      points.push([x, y]);
+    }
+    if (points.length < 2) {
+      elReportDailyTrend.innerHTML = "";
+      return;
+    }
+    elReportDailyTrend.setAttribute("viewBox", "0 0 " + hostRect.width + " " + hostRect.height);
+    elReportDailyTrend.innerHTML = "";
+
+    var line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    line.setAttribute(
+      "points",
+      points
+        .map(function (p) {
+          return p[0].toFixed(1) + "," + p[1].toFixed(1);
+        })
+        .join(" ")
+    );
+    line.setAttribute("fill", "none");
+    line.setAttribute("stroke", "var(--accent-text)");
+    line.setAttribute("stroke-opacity", "0.95");
+    line.setAttribute("stroke-width", "2");
+    line.setAttribute("stroke-linejoin", "round");
+    line.setAttribute("stroke-linecap", "round");
+    elReportDailyTrend.appendChild(line);
+
+    points.forEach(function (p) {
+      var dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      dot.setAttribute("cx", p[0].toFixed(1));
+      dot.setAttribute("cy", p[1].toFixed(1));
+      dot.setAttribute("r", "2.4");
+      dot.setAttribute("fill", "var(--accent-text)");
+      dot.setAttribute("fill-opacity", "0.95");
+      elReportDailyTrend.appendChild(dot);
+    });
+  }
+
   function renderBalanceForecast(balance, income) {
     if (
       !elMonthForecastNote ||
@@ -2960,8 +3196,8 @@
       return true;
     });
     rows.sort(function (a, b) {
-      var at = expenseCreatedAt(a);
-      var bt = expenseCreatedAt(b);
+      var at = expenseDateTs(a);
+      var bt = expenseDateTs(b);
       if (at !== bt) return bt - at;
       return String(b.id || "").localeCompare(String(a.id || ""));
     });
@@ -2976,8 +3212,64 @@
     return isNaN(n) ? 0 : n;
   }
 
+  function expenseDateTs(e) {
+    if (e && typeof e.dateTs === "number" && e.dateTs > 0) {
+      return Math.round(e.dateTs);
+    }
+    return expenseCreatedAt(e);
+  }
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function formatDateInputValueFromTs(ts) {
+    if (typeof ts !== "number" || ts <= 0) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function parseDateInputToDate(dateStr) {
+    if (typeof dateStr !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+    var parts = dateStr.split("-");
+    var y = Number(parts[0]);
+    var m = Number(parts[1]);
+    var d = Number(parts[2]);
+    if (!isFinite(y) || !isFinite(m) || !isFinite(d)) return null;
+    var out = new Date(y, m - 1, d);
+    if (
+      out.getFullYear() !== y ||
+      out.getMonth() !== m - 1 ||
+      out.getDate() !== d
+    ) {
+      return null;
+    }
+    return out;
+  }
+
+  function mergeDateWithBaseTime(dateStr, baseTs) {
+    var dateOnly = parseDateInputToDate(dateStr);
+    if (!dateOnly) return 0;
+    var base = new Date(typeof baseTs === "number" && baseTs > 0 ? baseTs : nowTs());
+    return new Date(
+      dateOnly.getFullYear(),
+      dateOnly.getMonth(),
+      dateOnly.getDate(),
+      base.getHours(),
+      base.getMinutes(),
+      base.getSeconds(),
+      base.getMilliseconds()
+    ).getTime();
+  }
+
+  function resetAddExpenseDateInput() {
+    if (!elExpenseDate) return;
+    elExpenseDate.value = formatDateInputValueFromTs(nowTs());
+  }
+
   function formatExpenseInputDate(e) {
-    var ts = expenseCreatedAt(e);
+    var ts = expenseDateTs(e);
     if (!ts && e && typeof e.updatedAt === "number" && e.updatedAt > 0) {
       ts = e.updatedAt;
     }
@@ -3013,6 +3305,7 @@
     var map = [
       { key: "pie", el: elReportModePie },
       { key: "jars", el: elReportModeJars },
+      { key: "daily", el: elReportModeDaily },
     ];
     map.forEach(function (x) {
       if (!x.el) return;
@@ -3022,6 +3315,9 @@
     });
     if (elReportPieView)
       elReportPieView.hidden = reportMode !== "pie" && reportMode !== "jars";
+    if (elReportDailyView) {
+      elReportDailyView.hidden = reportMode !== "daily";
+    }
     if (elReportJarPieToolbar) {
       elReportJarPieToolbar.hidden = reportMode !== "jars";
     }
@@ -3038,14 +3334,20 @@
         elReportJarPieHint.hidden = true;
       }
     }
+    renderReportDailyRangeButtons();
   }
 
   function setReportMode(next) {
-    if (next !== "pie" && next !== "jars") return;
+    if (next !== "pie" && next !== "jars" && next !== "daily") return;
     if (next !== "jars") reportJarDrillId = null;
+    if (next === "daily") reportDailyNeedsAutoScroll = true;
     reportMode = next;
     renderReportModeButtons();
-    renderPieChart();
+    if (reportMode === "daily") {
+      renderDailyReportChart();
+    } else {
+      renderPieChart();
+    }
   }
 
   function scrollAndHighlightExpenseRow(expenseId) {
@@ -3067,8 +3369,12 @@
     saveAppData();
     renderSummary();
     renderExpenseList();
-    renderPieChart();
     renderReportModeButtons();
+    if (reportMode === "daily") {
+      renderDailyReportChart();
+    } else {
+      renderPieChart();
+    }
     renderFixedTemplatesList();
     renderMonthSpendingJars();
     if (elSideMenu && !elSideMenu.hidden) {
@@ -3543,11 +3849,14 @@
     syncFixedIntoMonth(state, key);
     activeMonthKey = key;
     reportJarDrillId = null;
+    reportDailyRange = "month";
+    reportDailyNeedsAutoScroll = true;
 
     elMonthScreenTitle.textContent = formatMonthKeyVi(key);
 
     setIncomeFieldFromState();
     updateAmountPreview(elAmount, elExpensePreview);
+    resetAddExpenseDateInput();
 
     persistAndRender();
 
@@ -3621,6 +3930,10 @@
     var nameTrim = elName.value.trim();
     var cat = elCategory.value;
     var isFixed = elExpenseFixed && elExpenseFixed.checked;
+    var dateTs = mergeDateWithBaseTime(
+      elExpenseDate ? elExpenseDate.value : "",
+      nowTs()
+    );
     var templateId = null;
     if (isFixed) {
       templateId = "ft-" + uid();
@@ -3639,11 +3952,13 @@
       amount: amount,
       updatedAt: nowTs(),
     };
+    if (dateTs > 0) row.dateTs = dateTs;
     if (templateId) row.templateId = templateId;
     state.expenses.push(row);
     elName.value = "";
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
+    resetAddExpenseDateInput();
     if (elExpenseFixed) elExpenseFixed.checked = false;
     persistAndRender();
     scrollAndHighlightExpenseRow(row.id);
@@ -3687,6 +4002,29 @@
   if (elReportModeJars) {
     elReportModeJars.addEventListener("click", function () {
       setReportMode("jars");
+    });
+  }
+  if (elReportModeDaily) {
+    elReportModeDaily.addEventListener("click", function () {
+      setReportMode("daily");
+    });
+  }
+  if (elReportDailyRangeMonth) {
+    elReportDailyRangeMonth.addEventListener("click", function () {
+      if (reportDailyRange === "month") return;
+      reportDailyRange = "month";
+      reportDailyNeedsAutoScroll = true;
+      renderReportModeButtons();
+      renderDailyReportChart();
+    });
+  }
+  if (elReportDailyRange7Days) {
+    elReportDailyRange7Days.addEventListener("click", function () {
+      if (reportDailyRange === "7days") return;
+      reportDailyRange = "7days";
+      reportDailyNeedsAutoScroll = true;
+      renderReportModeButtons();
+      renderDailyReportChart();
     });
   }
   if (elReportJarPieBack) {
@@ -3908,6 +4246,9 @@
     if (elEditExpenseName) elEditExpenseName.value = e.name || "";
     elEditAmount.value = formatAsNganDisplay(e.amount);
     updateAmountPreview(elEditAmount, elEditAmountPreview);
+    if (elEditExpenseDate) {
+      elEditExpenseDate.value = formatDateInputValueFromTs(expenseDateTs(e));
+    }
     if (elEditExpenseFixed) {
       elEditExpenseFixed.checked = !!e.templateId;
       // Không cho tạo mới khoản cố định từ tháng quá khứ.
@@ -4032,6 +4373,13 @@
     e.category = cat;
     e.name = nameTrim;
     e.amount = amount;
+    if (elEditExpenseDate && elEditExpenseDate.value) {
+      var baseTs = expenseDateTs(e) || nowTs();
+      var nextDateTs = mergeDateWithBaseTime(elEditExpenseDate.value, baseTs);
+      if (nextDateTs > 0) {
+        e.dateTs = nextDateTs;
+      }
+    }
     e.updatedAt = nowTs();
     if (elEditExpenseFixed && elEditExpenseFixed.checked && !e.templateId) {
       var isPastMonth =
