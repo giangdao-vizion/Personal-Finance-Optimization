@@ -15,6 +15,9 @@
   /** Các biểu tượng có sẵn khi tạo / sửa danh mục */
   var ICON_PRESETS = [
     { id: "food", sym: "🍜" },
+    { id: "fruit", sym: "🍎" },
+    { id: "bubble-tea", sym: "🧋" },
+    { id: "drink", sym: "🥤" },
     { id: "receipt", sym: "🧾" },
     { id: "shield", sym: "🛡️" },
     { id: "cart", sym: "🛒" },
@@ -36,6 +39,9 @@
   ];
   var ICON_PRESET_NAMES = {
     food: "Ăn uống",
+    fruit: "Trái cây",
+    "bubble-tea": "Trà sữa",
+    drink: "Ly nước / đồ uống",
     receipt: "Hóa đơn",
     shield: "Bảo hiểm",
     cart: "Siêu thị",
@@ -1702,17 +1708,80 @@
     return out;
   }
 
+  function swapArrayIndices(arr, i, j) {
+    if (!arr || i === j) return false;
+    if (i < 0 || j < 0 || i >= arr.length || j >= arr.length) return false;
+    var t = arr[i];
+    arr[i] = arr[j];
+    arr[j] = t;
+    return true;
+  }
+
+  function appendReorderControlColumn(parentEl, index, len, onSwapWithIndex) {
+    var col = document.createElement("div");
+    col.className = "settings-reorder-col";
+    var btnUp = document.createElement("button");
+    btnUp.type = "button";
+    btnUp.className = "btn-icon btn-icon-muted settings-reorder-btn";
+    btnUp.setAttribute("aria-label", "Đưa lên");
+    btnUp.disabled = index <= 0;
+    btnUp.appendChild(iconChevronUpSvg());
+    btnUp.addEventListener("click", function () {
+      if (index > 0) onSwapWithIndex(index - 1);
+    });
+    var btnDown = document.createElement("button");
+    btnDown.type = "button";
+    btnDown.className = "btn-icon btn-icon-muted settings-reorder-btn";
+    btnDown.setAttribute("aria-label", "Đưa xuống");
+    btnDown.disabled = index >= len - 1;
+    btnDown.appendChild(iconChevronDownSvg());
+    btnDown.addEventListener("click", function () {
+      if (index < len - 1) onSwapWithIndex(index + 1);
+    });
+    col.appendChild(btnUp);
+    col.appendChild(btnDown);
+    parentEl.appendChild(col);
+  }
+
+  function afterCategoriesReordered() {
+    saveAppData();
+    renderSettingsCategoriesList();
+    renderNewJarCategoryCheckboxes();
+    refreshAllCategorySelects();
+    if (editingJarId) {
+      var ej = (app.spendingJars || []).filter(function (x) {
+        return x.id === editingJarId;
+      })[0];
+      if (ej && elEditJarCategories) {
+        renderJarCategoryCheckboxes(elEditJarCategories, "jar-cat-edit", ej.categoryIds || []);
+      }
+    }
+    if (activeMonthKey && state) persistAndRender();
+  }
+
+  function afterJarsReordered() {
+    saveAppData();
+    renderSettingsJarsList();
+    if (activeMonthKey && state) persistAndRender();
+  }
+
   function renderSettingsJarsList() {
     if (!elSettingsJarsList) return;
     ensureSpendingJarsNormalized();
     elSettingsJarsList.innerHTML = "";
-    app.spendingJars.forEach(function (j) {
+    var jarsLen = (app.spendingJars || []).length;
+    app.spendingJars.forEach(function (j, jIdx) {
       var li = document.createElement("li");
       li.className = "settings-jar-row";
 
       var pic = document.createElement("div");
       pic.className = "settings-jar-pig-wrap";
       pic.appendChild(piggyBankUseSvg(j.color, 44));
+
+      appendReorderControlColumn(li, jIdx, jarsLen, function (otherIdx) {
+        if (!swapArrayIndices(app.spendingJars, jIdx, otherIdx)) return;
+        afterJarsReordered();
+      });
 
       var mid = document.createElement("div");
       mid.className = "settings-jar-mid";
@@ -2066,7 +2135,8 @@
   function renderSettingsCategoriesList() {
     if (!elSettingsCategoriesList) return;
     elSettingsCategoriesList.innerHTML = "";
-    app.categories.forEach(function (c) {
+    var catLen = (app.categories || []).length;
+    app.categories.forEach(function (c, cIdx) {
       var li = document.createElement("li");
       li.className = "settings-category-row";
 
@@ -2074,6 +2144,11 @@
       sym.className = "settings-category-sym";
       sym.textContent = iconIdToSym(c.iconId);
       sym.setAttribute("aria-hidden", "true");
+
+      appendReorderControlColumn(li, cIdx, catLen, function (otherIdx) {
+        if (!swapArrayIndices(app.categories, cIdx, otherIdx)) return;
+        afterCategoriesReordered();
+      });
 
       var mid = document.createElement("div");
       mid.className = "settings-category-mid";
@@ -2705,6 +2780,13 @@
     return m[3] + "/" + m[2];
   }
 
+  /** Chỉ số ngày (01…31), dùng nhãn trục biểu đồ theo ngày. */
+  function dayOfMonthOnlyLabelFromKey(key) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ""));
+    if (!m) return key || "";
+    return m[3];
+  }
+
   function dateFromDayKey(key) {
     var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ""));
     if (!m) return null;
@@ -2782,6 +2864,31 @@
     return out;
   }
 
+  /**
+   * Trung bình động 3 ngày (nhìn về quá khứ): ngày đầu = giá trị ngày đó,
+   * ngày thứ hai = TB hai ngày, từ ngày thứ ba = TB ba ngày liền trước.
+   */
+  function movingAverage3Trailing(values) {
+    var out = [];
+    var i;
+    var n = values.length;
+    for (i = 0; i < n; i++) {
+      var v = values[i];
+      if (typeof v !== "number" || isNaN(v)) v = 0;
+      if (i === 0) {
+        out.push(v);
+      } else if (i === 1) {
+        var v0 = typeof values[0] === "number" && !isNaN(values[0]) ? values[0] : 0;
+        out.push((v0 + v) / 2);
+      } else {
+        var va = typeof values[i - 1] === "number" && !isNaN(values[i - 1]) ? values[i - 1] : 0;
+        var vb = typeof values[i - 2] === "number" && !isNaN(values[i - 2]) ? values[i - 2] : 0;
+        out.push((v + va + vb) / 3);
+      }
+    }
+    return out;
+  }
+
   function renderReportDailyRangeButtons() {
     var map = [
       { key: "month", el: elReportDailyRangeMonth },
@@ -2810,6 +2917,7 @@
     }
     if (!keys.length) {
       if (elReportDailyTrend) elReportDailyTrend.innerHTML = "";
+      if (elReportDailyBars) delete elReportDailyBars.dataset.maxAmount;
       elReportDailyScroll.hidden = true;
       elReportDailyEmpty.hidden = false;
       return;
@@ -2817,11 +2925,13 @@
     var maxAmount = keys.reduce(function (max, key) {
       return Math.max(max, byDay[key] || 0);
     }, 0);
+    if (elReportDailyBars) elReportDailyBars.dataset.maxAmount = String(maxAmount);
     if (elReportDailyTrend) elReportDailyTrend.innerHTML = "";
     keys.forEach(function (key) {
       var amount = byDay[key] || 0;
       var col = document.createElement("div");
       col.className = "report-day-col";
+      col.dataset.rawAmount = String(amount);
 
       var barWrap = document.createElement("div");
       barWrap.className = "report-day-bar-wrap";
@@ -2839,7 +2949,7 @@
 
       var label = document.createElement("span");
       label.className = "report-day-label";
-      label.textContent = dayLabelFromKey(key);
+      label.textContent = dayOfMonthOnlyLabelFromKey(key);
 
       col.appendChild(barWrap);
       col.appendChild(amountEl);
@@ -2875,14 +2985,26 @@
       elReportDailyTrend.innerHTML = "";
       return;
     }
-    var points = [];
+    var maxAmount = parseFloat(elReportDailyBars.dataset.maxAmount || "0");
+    if (isNaN(maxAmount)) maxAmount = 0;
+    var raw = [];
     var i;
     for (i = 0; i < cols.length; i++) {
-      var bar = cols[i].querySelector(".report-day-bar");
-      if (!bar) continue;
-      var barRect = bar.getBoundingClientRect();
-      var x = barRect.left - hostRect.left + barRect.width / 2;
-      var y = barRect.top - hostRect.top;
+      var a = parseFloat(cols[i].dataset.rawAmount || "0");
+      raw.push(isNaN(a) ? 0 : a);
+    }
+    var maSeries = movingAverage3Trailing(raw);
+    var points = [];
+    for (i = 0; i < cols.length; i++) {
+      var wrap = cols[i].querySelector(".report-day-bar-wrap");
+      if (!wrap) continue;
+      var wrapRect = wrap.getBoundingClientRect();
+      var maAmt = maSeries[i] != null ? maSeries[i] : 0;
+      var pct =
+        maxAmount > 0 ? Math.max(2, Math.round((maAmt / maxAmount) * 100)) : 2;
+      var frac = pct / 100;
+      var x = wrapRect.left - hostRect.left + wrapRect.width / 2;
+      var y = wrapRect.bottom - hostRect.top - frac * wrapRect.height;
       points.push([x, y]);
     }
     if (points.length < 2) {
@@ -2992,6 +3114,28 @@
     svg.setAttribute("height", "20");
     var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
     use.setAttribute("href", "#icon-pencil");
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function iconChevronUpSvg() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon-svg");
+    svg.setAttribute("width", "18");
+    svg.setAttribute("height", "18");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#icon-chevron-up");
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function iconChevronDownSvg() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon-svg");
+    svg.setAttribute("width", "18");
+    svg.setAttribute("height", "18");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#icon-chevron-down");
     svg.appendChild(use);
     return svg;
   }
