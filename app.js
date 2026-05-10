@@ -2760,6 +2760,19 @@
     return out;
   }
 
+  /** Ngày trong biểu đồ “Tháng này”: không hiển thị ngày sau hôm nay; tháng quá khứ vẫn đủ ngày trong tháng. */
+  function monthDayKeysForDailyChart(monthKey) {
+    var all = monthDayKeys(monthKey);
+    if (!all.length) return [];
+    var cur = currentMonthKey();
+    if (monthKey < cur) return all;
+    if (monthKey > cur) return [];
+    var todayKey = dayKeyFromTs(nowTs());
+    return all.filter(function (k) {
+      return k <= todayKey;
+    });
+  }
+
   function recentDayKeysFromAnchor(anchorKey, count) {
     var out = [];
     var i;
@@ -2793,7 +2806,7 @@
       var maxDayKey = dayKeyFromTs(nowTs());
       keys = recentDayKeysFromAnchor(maxDayKey, 7);
     } else {
-      keys = monthDayKeys(activeMonthKey);
+      keys = monthDayKeysForDailyChart(activeMonthKey);
     }
     if (!keys.length) {
       if (elReportDailyTrend) elReportDailyTrend.innerHTML = "";
@@ -2890,19 +2903,21 @@
     );
     line.setAttribute("fill", "none");
     line.setAttribute("stroke", "var(--accent-text)");
-    line.setAttribute("stroke-opacity", "0.95");
-    line.setAttribute("stroke-width", "2");
+    line.setAttribute("stroke-opacity", "0.85");
+    line.setAttribute("stroke-width", "1");
+    line.setAttribute("stroke-dasharray", "4 3");
     line.setAttribute("stroke-linejoin", "round");
     line.setAttribute("stroke-linecap", "round");
+    line.setAttribute("vector-effect", "non-scaling-stroke");
     elReportDailyTrend.appendChild(line);
 
     points.forEach(function (p) {
       var dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       dot.setAttribute("cx", p[0].toFixed(1));
       dot.setAttribute("cy", p[1].toFixed(1));
-      dot.setAttribute("r", "2.4");
+      dot.setAttribute("r", "1.25");
       dot.setAttribute("fill", "var(--accent-text)");
-      dot.setAttribute("fill-opacity", "0.95");
+      dot.setAttribute("fill-opacity", "0.75");
       elReportDailyTrend.appendChild(dot);
     });
   }
