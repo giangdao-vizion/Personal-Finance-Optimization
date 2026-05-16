@@ -1,3 +1,13 @@
 {
-    "liveServer.settings.port": 5501
+  "liveServer.settings.port": 5501,
+
+  // Tắt kiểm tra lỗi T-SQL của extension Microsoft SQL (thường báo sai trên Postgres/Supabase).
+  "mssql.intelliSense.enableErrorChecking": false,
+
+  // Coi các file supabase*.sql là Plain Text → không còn Problems từ SQL linter (đổi lại khớp extension khác).
+  // Nếu vẫn còn lỗi: mở Command Palette → "Preferences: Open Workspace Settings (JSON)" và xóa khối files.associations,
+  // hoặc trong Settings tìm extension đang báo lỗi (SQLTools, Database Client…) và tắt validate/lint trong đó.
+  "files.associations": {
+    "**/supabase*.sql": "plaintext"
+  }
 }

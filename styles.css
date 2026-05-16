@@ -1576,6 +1576,7 @@ input[type="text"],
 input[type="email"],
 input[type="password"],
 input[type="date"],
+input[type="time"],
 select {
   width: 100%;
   min-height: var(--tap-min);
@@ -1597,6 +1598,12 @@ input[type="password"]::placeholder {
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.78;
+  filter: var(--date-picker-icon-filter, invert(0.82));
+}
+
+input[type="time"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
   opacity: 0.78;
   filter: var(--date-picker-icon-filter, invert(0.82));
@@ -1776,11 +1783,179 @@ select:focus-visible {
   min-width: 0;
 }
 
+.expense-list-toolbar {
+  margin: 0 0 0.55rem;
+  min-width: 0;
+}
+
+.expense-list-toolbar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.35rem 0.45rem;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
 .expense-filter-bar {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  margin: 0 0 0.55rem;
+  margin: 0;
+}
+
+.expense-filter-bar--compact {
+  flex: 0 1 auto;
+  margin: 0;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.expense-day-filter-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.expense-day-filter-toggle-btn {
+  flex: 1;
+  min-width: 7rem;
+  min-height: 32px;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.expense-day-filter-toggle-btn--compact {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0.22rem 0.52rem;
+  font-size: 0.68rem;
+}
+
+.expense-day-filter-toggle-btn:hover {
+  background: var(--surface-press);
+}
+
+.expense-day-filter-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.expense-clear-day-icon-btn {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.expense-clear-day-icon-btn:hover:not(:disabled) {
+  background: var(--surface-press);
+  color: var(--text);
+}
+
+.expense-clear-day-icon-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.expense-clear-day-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.expense-day-picker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.expense-day-picker-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.expense-day-picker-close-btn {
+  flex-shrink: 0;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+}
+
+.expense-day-picker-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.expense-day-picker-actions {
+  margin-top: 0.85rem;
+}
+
+.expense-list-day-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.3rem;
+  width: 100%;
+  max-width: 21rem;
+}
+
+.expense-list-day-grid--picker {
+  width: 100%;
+  max-width: none;
+}
+
+.expense-day-grid-btn {
+  box-sizing: border-box;
+  min-height: 2.1rem;
+  min-width: 0;
+  padding: 0.15rem 0.1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-elevated);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.expense-day-grid-btn:hover {
+  background: var(--surface-press);
+  color: var(--text);
+}
+
+.expense-day-grid-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.expense-day-grid-btn.is-selected {
+  background: var(--accent-soft);
+  border-color: rgba(52, 195, 160, 0.45);
+  color: var(--accent-text);
 }
 
 .expense-pager {
@@ -1855,6 +2030,13 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
+.expense-filter-btn--compact {
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 0.22rem 0.48rem;
+  font-size: 0.68rem;
+}
+
 .expense-list {
   list-style: none;
   margin: 0;
@@ -1871,6 +2053,15 @@ select:focus-visible {
   padding: 0;
   border-bottom: 1px solid var(--border);
   min-height: 48px;
+}
+
+.expense-row-readonly {
+  overflow: visible;
+}
+
+.expense-row-readonly .expense-swipe-main {
+  cursor: default;
+  touch-action: auto;
 }
 
 .expense-swipe-track {
@@ -2149,6 +2340,38 @@ select:focus-visible {
   .inline-info-hint .field-hint {
     width: min(16rem, calc(100vw - 2rem));
     min-width: min(12rem, calc(100vw - 2rem));
+  }
+}
+
+/* Modal sửa khoản chi: ngày + giờ trong khung, không tràn ngang */
+#edit-expense-dialog .modal-panel {
+  min-width: 0;
+  max-width: min(400px, calc(100vw - 2rem));
+  overflow-x: hidden;
+}
+
+.expense-datetime-field {
+  min-width: 0;
+}
+
+.expense-datetime-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.expense-datetime-row input[type="date"],
+.expense-datetime-row input[type="time"] {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (max-width: 360px) {
+  .expense-datetime-row {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2436,48 +2659,116 @@ select:focus-visible {
 }
 
 .report-daily-bars {
-  position: relative;
   display: inline-flex;
   align-items: flex-end;
-  gap: 0.28rem;
-  min-height: 220px;
+  gap: 0.38rem;
+  min-height: 200px;
   min-width: 100%;
   padding: 0.35rem 0.1rem 0;
 }
 
-.report-daily-trend {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  overflow: visible;
-  z-index: 3;
-}
-
 .report-day-col {
-  width: 2.025rem;
+  width: 2.5rem;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.22rem;
+  gap: 0.35rem;
   position: relative;
-  z-index: 2;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 8px);
+}
+
+.report-day-col:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .report-day-bar-wrap {
   height: 130px;
   width: 100%;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.report-day-bar-track {
+  height: 100%;
+  width: 100%;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.report-day-bar-value {
+  width: 100%;
+  flex-shrink: 0;
+  display: block;
+  text-align: center;
+  font-size: 0.585rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.15;
+  margin-bottom: 0.3rem;
+  word-break: break-word;
+  white-space: normal;
+  font-variant-numeric: tabular-nums;
 }
 
 .report-day-bar {
   width: 100%;
+  align-self: stretch;
+  flex-shrink: 0;
   min-height: 2px;
-  border-radius: 8px 8px 3px 3px;
+  border-radius: 7px 7px 2px 2px;
   background: linear-gradient(180deg, var(--accent) 0%, var(--accent-press) 100%);
+}
+
+.report-day-label {
+  font-size: 0.62rem;
+  line-height: 1.15;
+  font-weight: 600;
+  color: var(--muted2);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  width: 100%;
+}
+
+.report-day-col.is-selected .report-day-bar {
+  background: linear-gradient(180deg, var(--accent-text) 0%, var(--accent-press) 100%);
+  box-shadow: 0 0 0 2px rgba(52, 195, 160, 0.4);
+}
+
+.report-day-col.is-selected .report-day-label {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.report-day-col.is-selected .report-day-bar-value {
+  color: var(--accent-text);
+}
+
+.report-daily-detail {
+  margin-top: 0.65rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.report-daily-detail-heading {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.report-daily-detail .empty-state {
+  margin: 0 0 0.45rem;
+  padding: 0.85rem 0.35rem;
+}
+
+.report-daily-expense-list {
+  max-height: 45vh;
 }
 
 .report-day-amount {
@@ -2486,22 +2777,6 @@ select:focus-visible {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.report-day-label {
-  font-size: 0.66rem;
-  line-height: 1.2;
-  color: var(--muted2);
-  font-variant-numeric: tabular-nums;
-}
-
-.pie-slice-interactive {
-  cursor: pointer;
-}
-
-.pie-slice-interactive:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
 }
 
 .pie-legend-item-interactive {
@@ -2543,11 +2818,54 @@ select:focus-visible {
 }
 
 .pie-svg {
-  width: min(220px, 72vw);
+  width: min(240px, 78vw);
   height: auto;
   max-width: 100%;
   display: block;
   filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.35));
+}
+
+.pie-donut-slice {
+  stroke: var(--surface);
+  stroke-linejoin: round;
+}
+
+.pie-donut-pct {
+  pointer-events: none;
+  fill: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font);
+  paint-order: stroke fill;
+  stroke: rgba(0, 0, 0, 0.38);
+  stroke-width: 2.5px;
+}
+
+.pie-donut-center-sub {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font);
+}
+
+.pie-donut-center-total {
+  fill: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+.pie-donut-seg-interactive {
+  cursor: pointer;
+}
+
+.pie-donut-seg-interactive:focus-visible {
+  outline: none;
+}
+
+.pie-donut-seg-interactive:focus-visible path {
+  filter: brightness(1.08);
 }
 
 .pie-legend {
@@ -2610,7 +2928,7 @@ select:focus-visible {
   }
 
   .pie-svg {
-    width: 200px;
+    width: 228px;
     flex-shrink: 0;
   }
 

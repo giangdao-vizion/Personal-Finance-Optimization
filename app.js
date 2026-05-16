@@ -437,6 +437,34 @@
     return out;
   }
 
+  /** Chỉ phần settings đồng bộ lên cloud — theme giữ cục bộ từng máy. */
+  function settingsForCloudStorage(s) {
+    var ns = normalizeSettings(s || {});
+    return { defaultLimit: ns.defaultLimit };
+  }
+
+  /** Chuỗi JSON ổn định để so sánh / lastSynced (không gồm theme). */
+  function wirePayloadSignature(payload) {
+    var n;
+    try {
+      n = normalizeAppDataShape(payload || {});
+    } catch (e) {
+      return "";
+    }
+    var w = {
+      months: n.months,
+      fixedTemplates: n.fixedTemplates,
+      settings: settingsForCloudStorage(n.settings),
+      categories: n.categories,
+      spendingJars: n.spendingJars,
+    };
+    try {
+      return JSON.stringify(w);
+    } catch (e2) {
+      return "";
+    }
+  }
+
   function normalizeAppDataShape(d) {
     var src = d && typeof d === "object" ? d : {};
     var months = src.months && typeof src.months === "object" ? src.months : {};
@@ -633,7 +661,7 @@
         },
         fixedTemplateUpdatedAt
       ),
-      settings: local.settings,
+      settings: settingsForCloudStorage(local.settings),
       categories: local.categories,
       spendingJars: mergeRowsById(
         remote.spendingJars || [],
@@ -699,13 +727,8 @@
   async function syncToSupabaseNow() {
     if (!supabaseEnabled || !supabaseClient || isApplyingCloudSnapshot) return;
     var payload = getAppPayload();
-    var payloadJson = "";
-    try {
-      payloadJson = JSON.stringify(payload);
-    } catch (e) {
-      return;
-    }
-    if (payloadJson === lastSyncedPayload) return;
+    var payloadSig = wirePayloadSignature(payload);
+    if (payloadSig === lastSyncedPayload) return;
     var mergedPayload = payload;
     try {
       var remoteRes = await supabaseClient
@@ -727,9 +750,9 @@
     );
     if (!res.error) {
       try {
-        lastSyncedPayload = JSON.stringify(mergedPayload);
+        lastSyncedPayload = wirePayloadSignature(mergedPayload);
       } catch (e2) {
-        lastSyncedPayload = payloadJson;
+        lastSyncedPayload = payloadSig;
       }
       setAuthSyncHint("Đã lưu lên cloud.", "ok");
     } else {
@@ -763,6 +786,7 @@
     var p = THEME_PRESETS[normalizeThemeMode(s.themeMode)];
     root.style.setProperty("--app-bg", p.appBg);
     root.style.setProperty("--app-text", p.appText);
+    root.style.setProperty("--text", p.appText);
     root.style.setProperty("--bg-elevated", p.bgElevated);
     root.style.setProperty("--surface", p.surface);
     root.style.setProperty("--surface-2", p.surface2);
@@ -860,9 +884,13 @@
   normalizeAllFixedTemplates();
 
   function applyNormalizedAppData(nextData) {
+    var preservedTheme = normalizeThemeMode(
+      app && app.settings && app.settings.themeMode ? app.settings.themeMode : "dark"
+    );
     app.months = nextData.months;
     app.fixedTemplates = nextData.fixedTemplates;
     app.settings = normalizeSettings(nextData.settings);
+    app.settings.themeMode = preservedTheme;
     app.categories = nextData.categories;
     migrateAllMonthsIncomeUserSet();
     ensureAppCategories();
@@ -896,7 +924,7 @@
           openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
             skipUrl: true,
           });
-          lastSyncedPayload = JSON.stringify(getAppPayload());
+          lastSyncedPayload = wirePayloadSignature(getAppPayload());
           setAuthSyncHint("Đã tải dữ liệu từ cloud.", "ok");
         } finally {
           isApplyingCloudSnapshot = false;
@@ -986,13 +1014,8 @@
         function (payload) {
           if (!payload || !payload.new || !payload.new.payload) return;
           var cloudData = normalizeAppDataShape(payload.new.payload);
-          var cloudJson;
-          try {
-            cloudJson = JSON.stringify(cloudData);
-          } catch (e) {
-            return;
-          }
-          if (cloudJson === lastSyncedPayload) return;
+          var cloudSig = wirePayloadSignature(cloudData);
+          if (cloudSig === lastSyncedPayload) return;
           isApplyingCloudSnapshot = true;
           try {
             applyNormalizedAppData(cloudData);
@@ -1002,7 +1025,7 @@
             openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
               skipUrl: true,
             });
-            lastSyncedPayload = cloudJson;
+            lastSyncedPayload = cloudSig;
           } finally {
             isApplyingCloudSnapshot = false;
           }
@@ -1265,6 +1288,12 @@
   var editingCategoryId = null;
   var editingJarId = null;
   var expenseListFilter = "all";
+  /** null = không lọc; 1…31 = ngày trong tháng `activeMonthKey`. */
+  var expenseListFilterDayNum = null;
+  /** Lưới ngày chỉ hiện sau khi user bấm nút «Ngày». */
+  var expenseListDayGridExpanded = false;
+  /** `${monthKey}:${daysInMonth}` — chỉ rebuild DOM lưới ngày khi seal đổi. */
+  var expenseListDayGridSeal = "";
   var incomeProgrammatic = false;
   var incomeDirty = false;
 
@@ -1399,13 +1428,20 @@
   var elExpensePreview = document.getElementById("expense-amount-preview");
   var elForm = document.getElementById("expense-form");
   var elExpenseDate = document.getElementById("expense-date");
+  var elExpenseTime = document.getElementById("expense-time");
   var elExpenseFixed = document.getElementById("expense-fixed");
   var elExpenseList = document.getElementById("expense-list");
   var elEmpty = document.getElementById("empty-state");
   var elExpenseFilterAll = document.getElementById("expense-filter-all");
   var elExpenseFilterFixed = document.getElementById("expense-filter-fixed");
   var elExpenseFilterFlex = document.getElementById("expense-filter-flex");
-  var elReportModePie = document.getElementById("report-mode-pie");
+  var elExpenseListDayGrid = document.getElementById("expense-list-filter-day-grid");
+  var elExpenseListDayFilterToggle = document.getElementById("expense-list-day-filter-toggle");
+  var elExpenseListClearDay = document.getElementById("expense-list-clear-day");
+  var elExpenseDayPickerDialog = document.getElementById("expense-day-picker-dialog");
+  var elExpenseDayPickerBackdrop = document.getElementById("expense-day-picker-backdrop");
+  var elExpenseDayPickerClose = document.getElementById("expense-day-picker-close");
+  var elExpenseDayPickerDone = document.getElementById("expense-day-picker-done");
   var elReportModeJars = document.getElementById("report-mode-jars");
   var elReportModeDaily = document.getElementById("report-mode-daily");
   var elReportJarPieToolbar = document.getElementById("report-jar-pie-toolbar");
@@ -1418,7 +1454,10 @@
   var elReportDailyEmpty = document.getElementById("report-daily-empty");
   var elReportDailyScroll = document.getElementById("report-daily-scroll");
   var elReportDailyBars = document.getElementById("report-daily-bars");
-  var elReportDailyTrend = document.getElementById("report-daily-trend");
+  var elReportDailyDetail = document.getElementById("report-daily-detail");
+  var elReportDailyDetailHeading = document.getElementById("report-daily-detail-heading");
+  var elReportDailyDetailEmptyDay = document.getElementById("report-daily-detail-empty-day");
+  var elReportDailyDetailList = document.getElementById("report-daily-detail-list");
   var elSumIncome = document.getElementById("sum-income");
   var elSumExpenses = document.getElementById("sum-expenses");
   var elSumBalance = document.getElementById("sum-balance");
@@ -1432,6 +1471,8 @@
   var elPieEmpty = document.getElementById("pie-chart-empty");
   var elPieBody = document.getElementById("pie-chart-body");
   var elPieSlices = document.getElementById("expense-pie-slices");
+  var elPieSliceLabels = document.getElementById("expense-pie-slice-labels");
+  var elPieCenter = document.getElementById("expense-pie-center");
   var elPieLegend = document.getElementById("expense-pie-legend");
   var elPieTitle = document.getElementById("pie-svg-title");
 
@@ -1522,6 +1563,7 @@
   var elEditAmount = document.getElementById("edit-expense-amount");
   var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
   var elEditExpenseDate = document.getElementById("edit-expense-date");
+  var elEditExpenseTime = document.getElementById("edit-expense-time");
   var elEditExpenseFixed = document.getElementById("edit-expense-fixed");
   var elEditTemplateNote = document.getElementById("edit-expense-template-note");
   var elEditSave = document.getElementById("edit-expense-save");
@@ -1533,9 +1575,11 @@
   var elAuthError = document.getElementById("auth-error");
   var elAuthSubmit = document.getElementById("auth-submit");
   var elAuthCancel = document.getElementById("auth-cancel");
-  var reportMode = "pie";
+  var reportMode = "jars";
   var reportDailyRange = "month";
   var reportDailyNeedsAutoScroll = true;
+  /** Ngày đang chọn trên biểu đồ theo ngày (YYYY-MM-DD), null = không chọn. */
+  var reportDailySelectedDayKey = null;
   /** Khi báo cáo ở chế độ Hũ: null = pie tất cả hũ; id hũ hoặc CONSOLIDATED_JAR_ID = pie danh mục trong hũ */
   var reportJarDrillId = null;
 
@@ -1613,14 +1657,32 @@
     elAuthError.classList.add("is-error");
   }
 
+  function updateModalOpenBodyLock() {
+    var open =
+      (elExpenseDayPickerDialog && !elExpenseDayPickerDialog.hidden) ||
+      (elAuthDialog && !elAuthDialog.hidden) ||
+      (elEditDialog && !elEditDialog.hidden) ||
+      (elEditFixedDialog && !elEditFixedDialog.hidden) ||
+      (elEditCategoryDialog && !elEditCategoryDialog.hidden) ||
+      (elEditJarDialog && !elEditJarDialog.hidden);
+    document.body.classList.toggle("modal-open", !!open);
+  }
+
+  function closeExpenseDayPicker() {
+    if (!expenseListDayGridExpanded) return;
+    expenseListDayGridExpanded = false;
+    syncExpenseDayGridPanelUi();
+  }
+
   function openAuthDialog() {
     if (!elAuthDialog) return;
+    closeExpenseDayPicker();
     setAuthError("");
     if (elAuthPassword) elAuthPassword.value = "";
     if (elAuthEmail && !elAuthEmail.value && supabaseUserEmail) elAuthEmail.value = supabaseUserEmail;
     elAuthDialog.hidden = false;
     elAuthDialog.setAttribute("aria-hidden", "false");
-    document.body.classList.add("modal-open");
+    updateModalOpenBodyLock();
     setTimeout(function () {
       if (elAuthEmail) elAuthEmail.focus();
     }, 0);
@@ -1631,14 +1693,7 @@
     elAuthDialog.hidden = true;
     elAuthDialog.setAttribute("aria-hidden", "true");
     setAuthError("");
-    if (
-      (!elEditDialog || elEditDialog.hidden) &&
-      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
-      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
-      (!elEditJarDialog || elEditJarDialog.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    updateModalOpenBodyLock();
   }
 
   function fillCategorySelect(el) {
@@ -1992,6 +2047,7 @@
       return x.id === jarId;
     })[0];
     if (!j || !elEditJarDialog) return;
+    closeExpenseDayPicker();
     closeEditCategoryDialog();
     closeEditFixedTemplateDialog();
     editingJarId = jarId;
@@ -2003,7 +2059,7 @@
     renderJarCategoryCheckboxes(elEditJarCategories, "jar-cat-edit", j.categoryIds || []);
     elEditJarDialog.hidden = false;
     elEditJarDialog.setAttribute("aria-hidden", "false");
-    document.body.classList.add("modal-open");
+    updateModalOpenBodyLock();
     setTimeout(function () {
       if (elEditJarLabelInput) elEditJarLabelInput.focus();
     }, 0);
@@ -2015,14 +2071,7 @@
       elEditJarDialog.hidden = true;
       elEditJarDialog.setAttribute("aria-hidden", "true");
     }
-    if (
-      (!elEditDialog || elEditDialog.hidden) &&
-      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
-      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
-      (!elAuthDialog || elAuthDialog.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    updateModalOpenBodyLock();
   }
 
   function saveEditJarDialog() {
@@ -2220,26 +2269,20 @@
       elEditCategoryDialog.hidden = true;
       elEditCategoryDialog.setAttribute("aria-hidden", "true");
     }
-    if (
-      (!elEditDialog || elEditDialog.hidden) &&
-      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
-      (!elAuthDialog || elAuthDialog.hidden) &&
-      (!elEditJarDialog || elEditJarDialog.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    updateModalOpenBodyLock();
   }
 
   function openEditCategoryDialog(catId) {
     var c = findCategory(catId);
     if (!c || !elEditCategoryDialog) return;
+    closeExpenseDayPicker();
     closeEditJarDialog();
     editingCategoryId = catId;
     if (elEditCategoryLabelInput) elEditCategoryLabelInput.value = c.label;
     renderIconPicker(elEditCategoryIcons, elEditCategoryIconId, c.iconId);
     elEditCategoryDialog.hidden = false;
     elEditCategoryDialog.setAttribute("aria-hidden", "false");
-    document.body.classList.add("modal-open");
+    updateModalOpenBodyLock();
     setTimeout(function () {
       if (elEditCategoryLabelInput) elEditCategoryLabelInput.focus();
     }, 0);
@@ -2437,31 +2480,45 @@
     "#e8986a",
   ];
 
-  function pieSlicePath(cx, cy, r, a0, a1) {
-    var x0 = cx + r * Math.cos(a0);
-    var y0 = cy + r * Math.sin(a0);
-    var x1 = cx + r * Math.cos(a1);
-    var y1 = cy + r * Math.sin(a1);
+  function donutSlicePath(cx, cy, rOuter, rInner, a0, a1) {
+    var xo0 = cx + rOuter * Math.cos(a0);
+    var yo0 = cy + rOuter * Math.sin(a0);
+    var xo1 = cx + rOuter * Math.cos(a1);
+    var yo1 = cy + rOuter * Math.sin(a1);
+    var xi0 = cx + rInner * Math.cos(a0);
+    var yi0 = cy + rInner * Math.sin(a0);
+    var xi1 = cx + rInner * Math.cos(a1);
+    var yi1 = cy + rInner * Math.sin(a1);
     var large = a1 - a0 > Math.PI ? 1 : 0;
     return (
       "M " +
-      cx +
+      xo0 +
       " " +
-      cy +
-      " L " +
-      x0 +
-      " " +
-      y0 +
+      yo0 +
       " A " +
-      r +
+      rOuter +
       " " +
-      r +
+      rOuter +
       " 0 " +
       large +
       " 1 " +
-      x1 +
+      xo1 +
       " " +
-      y1 +
+      yo1 +
+      " L " +
+      xi1 +
+      " " +
+      yi1 +
+      " A " +
+      rInner +
+      " " +
+      rInner +
+      " 0 " +
+      large +
+      " 0 " +
+      xi0 +
+      " " +
+      yi0 +
       " Z"
     );
   }
@@ -2477,6 +2534,12 @@
   function renderPieChartFromSegments(segments, accessibleTitle, onSegmentClick) {
     if (!elPieBody || !elPieSlices || !elPieLegend) return;
 
+    function clearDonutLayers() {
+      elPieSlices.innerHTML = "";
+      if (elPieSliceLabels) elPieSliceLabels.innerHTML = "";
+      if (elPieCenter) elPieCenter.innerHTML = "";
+    }
+
     var total = segments.reduce(function (s, x) {
       return s + x.amount;
     }, 0);
@@ -2484,7 +2547,7 @@
     if (total <= 0 || !segments.length) {
       elPieEmpty.hidden = false;
       elPieBody.hidden = true;
-      elPieSlices.innerHTML = "";
+      clearDonutLayers();
       elPieLegend.innerHTML = "";
       if (elPieTitle) elPieTitle.textContent = accessibleTitle || "Biểu đồ";
       return;
@@ -2495,33 +2558,55 @@
 
     var cx = 0;
     var cy = 0;
-    var r = 100;
-    var stroke = "#161d26";
-    elPieSlices.innerHTML = "";
+    var rOuter = 100;
+    var rInner = 58;
+    var rLabel = (rOuter + rInner) / 2;
+    var strokeW = 2.5;
+    clearDonutLayers();
+
+    function attachSegInteraction(g, seg) {
+      if (!onSegmentClick) return;
+      g.classList.add("pie-donut-seg-interactive");
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "button");
+      g.addEventListener("click", function () {
+        onSegmentClick(seg);
+      });
+      g.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          onSegmentClick(seg);
+        }
+      });
+    }
+
+    function appendPctLabel(am, pctStr) {
+      if (!elPieSliceLabels || !pctStr) return;
+      var tx = cx + rLabel * Math.cos(am);
+      var ty = cy + rLabel * Math.sin(am);
+      var t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      t.setAttribute("class", "pie-donut-pct");
+      t.setAttribute("x", tx.toFixed(2));
+      t.setAttribute("y", ty.toFixed(2));
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("dominant-baseline", "middle");
+      t.textContent = pctStr;
+      elPieSliceLabels.appendChild(t);
+    }
 
     if (segments.length === 1) {
       var seg0 = segments[0];
-      var circ = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      circ.setAttribute("cx", String(cx));
-      circ.setAttribute("cy", String(cy));
-      circ.setAttribute("r", String(r));
-      circ.setAttribute("fill", sliceFillAt(0, seg0));
-      circ.setAttribute("stroke", stroke);
-      circ.setAttribute("stroke-width", "2");
-      if (onSegmentClick) {
-        circ.classList.add("pie-slice-interactive");
-        circ.setAttribute("tabindex", "0");
-        circ.addEventListener("click", function () {
-          onSegmentClick(seg0);
-        });
-        circ.addEventListener("keydown", function (ev) {
-          if (ev.key === "Enter" || ev.key === " ") {
-            ev.preventDefault();
-            onSegmentClick(seg0);
-          }
-        });
-      }
-      elPieSlices.appendChild(circ);
+      var aEnd = -Math.PI / 2 + 2 * Math.PI * 0.999995;
+      var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", donutSlicePath(cx, cy, rOuter, rInner, -Math.PI / 2, aEnd));
+      path.setAttribute("fill", sliceFillAt(0, seg0));
+      path.setAttribute("class", "pie-donut-slice");
+      path.setAttribute("stroke-width", String(strokeW));
+      var g0 = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g0.appendChild(path);
+      attachSegInteraction(g0, seg0);
+      elPieSlices.appendChild(g0);
+      appendPctLabel(0, "100%");
     } else {
       var start = -Math.PI / 2;
       segments.forEach(function (seg, i) {
@@ -2530,26 +2615,43 @@
         var a1 = start + frac * 2 * Math.PI;
         start = a1;
         var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", pieSlicePath(cx, cy, r, a0, a1));
+        path.setAttribute("d", donutSlicePath(cx, cy, rOuter, rInner, a0, a1));
         path.setAttribute("fill", sliceFillAt(i, seg));
-        path.setAttribute("stroke", stroke);
-        path.setAttribute("stroke-width", "2");
-        path.setAttribute("stroke-linejoin", "round");
-        if (onSegmentClick) {
-          path.classList.add("pie-slice-interactive");
-          path.setAttribute("tabindex", "0");
-          path.addEventListener("click", function () {
-            onSegmentClick(seg);
-          });
-          path.addEventListener("keydown", function (ev) {
-            if (ev.key === "Enter" || ev.key === " ") {
-              ev.preventDefault();
-              onSegmentClick(seg);
-            }
-          });
+        path.setAttribute("class", "pie-donut-slice");
+        path.setAttribute("stroke-width", String(strokeW));
+        var g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.appendChild(path);
+        attachSegInteraction(g, seg);
+        elPieSlices.appendChild(g);
+        var span = a1 - a0;
+        var pctNum = total > 0 ? (seg.amount / total) * 100 : 0;
+        var pctInt = Math.round(pctNum);
+        var pctStr =
+          pctInt < 1 && seg.amount > 0
+            ? "<1%"
+            : pctInt + "%";
+        if (span >= 0.2) {
+          appendPctLabel((a0 + a1) / 2, pctStr);
         }
-        elPieSlices.appendChild(path);
       });
+    }
+
+    if (elPieCenter) {
+      var sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      sub.setAttribute("class", "pie-donut-center-sub");
+      sub.setAttribute("x", "0");
+      sub.setAttribute("y", "-10");
+      sub.setAttribute("text-anchor", "middle");
+      sub.textContent = "Tổng chi";
+      var tot = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      tot.setAttribute("class", "pie-donut-center-total");
+      tot.setAttribute("x", "0");
+      tot.setAttribute("y", "16");
+      tot.setAttribute("text-anchor", "middle");
+      tot.textContent = formatMoneyVNDShort(total);
+      tot.setAttribute("title", formatMoneyVND(total));
+      elPieCenter.appendChild(sub);
+      elPieCenter.appendChild(tot);
     }
 
     elPieLegend.innerHTML = "";
@@ -2593,17 +2695,6 @@
       });
       elPieTitle.textContent = accessibleTitle + ": " + parts.join(", ");
     }
-  }
-
-  function renderCategoryPieChart() {
-    if (!state) return;
-    var byCat = totalsByCategory();
-    var segments = [];
-    app.categories.forEach(function (c) {
-      var amt = byCat[c.id] || 0;
-      if (amt > 0) segments.push({ id: c.id, label: c.label, amount: amt });
-    });
-    renderPieChartFromSegments(segments, "Chi tiêu theo danh mục", null);
   }
 
   function renderJarPieChart() {
@@ -2702,10 +2793,6 @@
 
   function renderPieChart() {
     if (!elPieBody || !elPieSlices || !elPieLegend || !state) return;
-    if (reportMode === "pie") {
-      renderCategoryPieChart();
-      return;
-    }
     if (reportMode === "jars") {
       renderJarPieChart();
     }
@@ -2864,31 +2951,6 @@
     return out;
   }
 
-  /**
-   * Trung bình động 3 ngày (nhìn về quá khứ): ngày đầu = giá trị ngày đó,
-   * ngày thứ hai = TB hai ngày, từ ngày thứ ba = TB ba ngày liền trước.
-   */
-  function movingAverage3Trailing(values) {
-    var out = [];
-    var i;
-    var n = values.length;
-    for (i = 0; i < n; i++) {
-      var v = values[i];
-      if (typeof v !== "number" || isNaN(v)) v = 0;
-      if (i === 0) {
-        out.push(v);
-      } else if (i === 1) {
-        var v0 = typeof values[0] === "number" && !isNaN(values[0]) ? values[0] : 0;
-        out.push((v0 + v) / 2);
-      } else {
-        var va = typeof values[i - 1] === "number" && !isNaN(values[i - 1]) ? values[i - 1] : 0;
-        var vb = typeof values[i - 2] === "number" && !isNaN(values[i - 2]) ? values[i - 2] : 0;
-        out.push((v + va + vb) / 3);
-      }
-    }
-    return out;
-  }
-
   function renderReportDailyRangeButtons() {
     var map = [
       { key: "month", el: elReportDailyRangeMonth },
@@ -2900,6 +2962,88 @@
       x.el.classList.toggle("is-active", active);
       x.el.setAttribute("aria-pressed", active ? "true" : "false");
     });
+  }
+
+  function toggleReportDailyDaySelection(dayKey) {
+    if (!dayKey || typeof dayKey !== "string") return;
+    if (reportDailySelectedDayKey === dayKey) reportDailySelectedDayKey = null;
+    else reportDailySelectedDayKey = dayKey;
+    syncReportDailySelectionUI();
+  }
+
+  function expensesForReportDayKey(dayKey) {
+    if (!state || !dayKey || !Array.isArray(state.expenses)) return [];
+    var rows = [];
+    state.expenses.forEach(function (e) {
+      if (isRowDeleted(e)) return;
+      if (dayKeyFromTs(expenseDateTs(e)) !== dayKey) return;
+      rows.push(e);
+    });
+    rows.sort(function (a, b) {
+      var at = expenseDateTs(a);
+      var bt = expenseDateTs(b);
+      if (at !== bt) return bt - at;
+      return String(b.id || "").localeCompare(String(a.id || ""));
+    });
+    return rows;
+  }
+
+  function renderReportDailyDetailPanel() {
+    if (
+      !elReportDailyDetail ||
+      !elReportDailyDetailHeading ||
+      !elReportDailyDetailList
+    ) {
+      return;
+    }
+    if (!reportDailySelectedDayKey) {
+      elReportDailyDetail.hidden = true;
+      elReportDailyDetailList.innerHTML = "";
+      if (elReportDailyDetailEmptyDay) elReportDailyDetailEmptyDay.hidden = true;
+      return;
+    }
+    elReportDailyDetail.hidden = false;
+    var items = expensesForReportDayKey(reportDailySelectedDayKey);
+    elReportDailyDetailHeading.textContent =
+      "Ngày " + dayLabelFromKey(reportDailySelectedDayKey);
+    elReportDailyDetailList.innerHTML = "";
+    if (!items.length) {
+      if (elReportDailyDetailEmptyDay) {
+        elReportDailyDetailEmptyDay.hidden = false;
+        elReportDailyDetailEmptyDay.textContent =
+          "Không có khoản chi ghi nhận cho ngày này.";
+      }
+      return;
+    }
+    if (elReportDailyDetailEmptyDay) elReportDailyDetailEmptyDay.hidden = true;
+    var sum = items.reduce(function (s, e) {
+      return s + (typeof e.amount === "number" ? e.amount : 0);
+    }, 0);
+    items.forEach(function (e) {
+      elReportDailyDetailList.appendChild(createExpenseListRowElement(e, true));
+    });
+    var totalLi = document.createElement("li");
+    totalLi.className = "expense-total-row";
+    totalLi.innerHTML =
+      '<span class="expense-total-label"></span><span class="expense-total-amount"></span>';
+    totalLi.querySelector(".expense-total-label").textContent =
+      "Tổng chi (" + items.length + " khoản)";
+    totalLi.querySelector(".expense-total-amount").textContent = formatMoneyVND(sum);
+    elReportDailyDetailList.appendChild(totalLi);
+  }
+
+  function syncReportDailySelectionUI() {
+    if (!elReportDailyBars) return;
+    var cols = elReportDailyBars.querySelectorAll(".report-day-col");
+    var i;
+    for (i = 0; i < cols.length; i++) {
+      var col = cols[i];
+      var dk = col.dataset.dayKey || "";
+      var sel = !!reportDailySelectedDayKey && dk === reportDailySelectedDayKey;
+      col.classList.toggle("is-selected", sel);
+      col.setAttribute("aria-pressed", sel ? "true" : "false");
+    }
+    renderReportDailyDetailPanel();
   }
 
   function renderDailyReportChart() {
@@ -2916,47 +3060,72 @@
       keys = monthDayKeysForDailyChart(activeMonthKey);
     }
     if (!keys.length) {
-      if (elReportDailyTrend) elReportDailyTrend.innerHTML = "";
-      if (elReportDailyBars) delete elReportDailyBars.dataset.maxAmount;
       elReportDailyScroll.hidden = true;
       elReportDailyEmpty.hidden = false;
+      reportDailySelectedDayKey = null;
+      renderReportDailyDetailPanel();
       return;
+    }
+    var keySet = {};
+    keys.forEach(function (k) {
+      keySet[k] = true;
+    });
+    if (reportDailySelectedDayKey && !keySet[reportDailySelectedDayKey]) {
+      reportDailySelectedDayKey = null;
     }
     var maxAmount = keys.reduce(function (max, key) {
       return Math.max(max, byDay[key] || 0);
     }, 0);
-    if (elReportDailyBars) elReportDailyBars.dataset.maxAmount = String(maxAmount);
-    if (elReportDailyTrend) elReportDailyTrend.innerHTML = "";
     keys.forEach(function (key) {
       var amount = byDay[key] || 0;
       var col = document.createElement("div");
       col.className = "report-day-col";
-      col.dataset.rawAmount = String(amount);
+      col.dataset.dayKey = key;
+      col.tabIndex = 0;
+      col.setAttribute("role", "button");
+      col.setAttribute(
+        "aria-label",
+        "Ngày " + dayLabelFromKey(key) + ", chi " + formatMoneyVND(amount)
+      );
+      col.addEventListener("click", function () {
+        toggleReportDailyDaySelection(key);
+      });
+      col.addEventListener("keydown", function (ev) {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        ev.preventDefault();
+        toggleReportDailyDaySelection(key);
+      });
 
       var barWrap = document.createElement("div");
       barWrap.className = "report-day-bar-wrap";
+
+      var track = document.createElement("div");
+      track.className = "report-day-bar-track";
+
+      var amountEl = document.createElement("span");
+      amountEl.className = "report-day-bar-value";
+      amountEl.textContent = amount > 0 ? formatMoneyListShort(amount) : "0";
+      amountEl.title = dayLabelFromKey(key) + ": " + formatMoneyVND(amount);
 
       var bar = document.createElement("div");
       bar.className = "report-day-bar";
       var h = maxAmount > 0 ? Math.max(2, Math.round((amount / maxAmount) * 100)) : 2;
       bar.style.height = h + "%";
       bar.title = dayLabelFromKey(key) + ": " + formatMoneyVND(amount);
-      barWrap.appendChild(bar);
 
-      var amountEl = document.createElement("span");
-      amountEl.className = "report-day-amount";
-      amountEl.textContent = amount > 0 ? formatMoneyListShort(amount) : "0";
+      track.appendChild(amountEl);
+      track.appendChild(bar);
+      barWrap.appendChild(track);
 
       var label = document.createElement("span");
       label.className = "report-day-label";
-      label.textContent = dayOfMonthOnlyLabelFromKey(key);
+      label.textContent = dayLabelFromKey(key);
 
       col.appendChild(barWrap);
-      col.appendChild(amountEl);
       col.appendChild(label);
       elReportDailyBars.appendChild(col);
     });
-    requestAnimationFrame(drawDailyTrendLine);
+    syncReportDailySelectionUI();
     elReportDailyEmpty.hidden = false;
     if (Object.keys(byDay).some(function (k) { return keys.indexOf(k) !== -1 && byDay[k] > 0; })) {
       elReportDailyEmpty.hidden = true;
@@ -2971,77 +3140,6 @@
       });
       reportDailyNeedsAutoScroll = false;
     }
-  }
-
-  function drawDailyTrendLine() {
-    if (!elReportDailyBars || !elReportDailyTrend) return;
-    var cols = elReportDailyBars.querySelectorAll(".report-day-col");
-    if (!cols || cols.length < 2) {
-      elReportDailyTrend.innerHTML = "";
-      return;
-    }
-    var hostRect = elReportDailyBars.getBoundingClientRect();
-    if (!hostRect.width || !hostRect.height) {
-      elReportDailyTrend.innerHTML = "";
-      return;
-    }
-    var maxAmount = parseFloat(elReportDailyBars.dataset.maxAmount || "0");
-    if (isNaN(maxAmount)) maxAmount = 0;
-    var raw = [];
-    var i;
-    for (i = 0; i < cols.length; i++) {
-      var a = parseFloat(cols[i].dataset.rawAmount || "0");
-      raw.push(isNaN(a) ? 0 : a);
-    }
-    var maSeries = movingAverage3Trailing(raw);
-    var points = [];
-    for (i = 0; i < cols.length; i++) {
-      var wrap = cols[i].querySelector(".report-day-bar-wrap");
-      if (!wrap) continue;
-      var wrapRect = wrap.getBoundingClientRect();
-      var maAmt = maSeries[i] != null ? maSeries[i] : 0;
-      var pct =
-        maxAmount > 0 ? Math.max(2, Math.round((maAmt / maxAmount) * 100)) : 2;
-      var frac = pct / 100;
-      var x = wrapRect.left - hostRect.left + wrapRect.width / 2;
-      var y = wrapRect.bottom - hostRect.top - frac * wrapRect.height;
-      points.push([x, y]);
-    }
-    if (points.length < 2) {
-      elReportDailyTrend.innerHTML = "";
-      return;
-    }
-    elReportDailyTrend.setAttribute("viewBox", "0 0 " + hostRect.width + " " + hostRect.height);
-    elReportDailyTrend.innerHTML = "";
-
-    var line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    line.setAttribute(
-      "points",
-      points
-        .map(function (p) {
-          return p[0].toFixed(1) + "," + p[1].toFixed(1);
-        })
-        .join(" ")
-    );
-    line.setAttribute("fill", "none");
-    line.setAttribute("stroke", "var(--accent-text)");
-    line.setAttribute("stroke-opacity", "0.85");
-    line.setAttribute("stroke-width", "1");
-    line.setAttribute("stroke-dasharray", "4 3");
-    line.setAttribute("stroke-linejoin", "round");
-    line.setAttribute("stroke-linecap", "round");
-    line.setAttribute("vector-effect", "non-scaling-stroke");
-    elReportDailyTrend.appendChild(line);
-
-    points.forEach(function (p) {
-      var dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      dot.setAttribute("cx", p[0].toFixed(1));
-      dot.setAttribute("cy", p[1].toFixed(1));
-      dot.setAttribute("r", "1.25");
-      dot.setAttribute("fill", "var(--accent-text)");
-      dot.setAttribute("fill-opacity", "0.75");
-      elReportDailyTrend.appendChild(dot);
-    });
   }
 
   function renderBalanceForecast(balance, income) {
@@ -3228,99 +3326,227 @@
     renderFixedTemplatesInto(elSettingsFixedList, true);
   }
 
+  function expenseListFilterResolvedDayKey() {
+    if (expenseListFilterDayNum == null || !activeMonthKey) return null;
+    var p = parseMonthKeyParts(activeMonthKey);
+    if (!p) return null;
+    var dim = new Date(p.year, p.month, 0).getDate();
+    var dom = expenseListFilterDayNum;
+    if (dom < 1 || dom > dim) return null;
+    return (
+      p.year +
+      "-" +
+      String(p.month).padStart(2, "0") +
+      "-" +
+      String(dom).padStart(2, "0")
+    );
+  }
+
+  function alignExpenseListDayFilterFromDayKey(dayKey) {
+    if (!dayKey || !activeMonthKey) return;
+    if (dayKey.indexOf(activeMonthKey + "-") !== 0) return;
+    var rest = dayKey.slice(activeMonthKey.length + 1);
+    var dn = parseInt(rest, 10);
+    if (!isNaN(dn) && dn >= 1) expenseListFilterDayNum = dn;
+  }
+
+  function syncExpenseDayGridPanelUi() {
+    if (elExpenseDayPickerDialog) {
+      elExpenseDayPickerDialog.hidden = !expenseListDayGridExpanded;
+      elExpenseDayPickerDialog.setAttribute(
+        "aria-hidden",
+        expenseListDayGridExpanded ? "false" : "true"
+      );
+      updateModalOpenBodyLock();
+    }
+    if (elExpenseListDayFilterToggle) {
+      elExpenseListDayFilterToggle.setAttribute(
+        "aria-expanded",
+        expenseListDayGridExpanded ? "true" : "false"
+      );
+      if (expenseListFilterDayNum !== null) {
+        elExpenseListDayFilterToggle.textContent =
+          "Ngày " + expenseListFilterDayNum;
+      } else {
+        elExpenseListDayFilterToggle.textContent = "Ngày";
+      }
+    }
+  }
+
+  function renderExpenseListDayGrid() {
+    if (!elExpenseListDayGrid) return;
+    var p = parseMonthKeyParts(activeMonthKey);
+    var dim = p ? new Date(p.year, p.month, 0).getDate() : 31;
+    if (
+      expenseListFilterDayNum !== null &&
+      (expenseListFilterDayNum < 1 || expenseListFilterDayNum > dim)
+    ) {
+      expenseListFilterDayNum = null;
+    }
+    var seal = (activeMonthKey || "") + ":" + dim;
+    if (expenseListDayGridSeal !== seal) {
+      expenseListDayGridSeal = seal;
+      elExpenseListDayGrid.innerHTML = "";
+      var d;
+      for (d = 1; d <= dim; d++) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "expense-day-grid-btn";
+        btn.dataset.dayNum = String(d);
+        btn.textContent = String(d);
+        btn.setAttribute("aria-label", "Chỉ hiện khoản chi ngày " + d);
+        elExpenseListDayGrid.appendChild(btn);
+      }
+    }
+    var sel = expenseListFilterDayNum;
+    var buttons = elExpenseListDayGrid.querySelectorAll(".expense-day-grid-btn");
+    var i;
+    for (i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      var dn = parseInt(b.dataset.dayNum, 10);
+      var on = sel !== null && !isNaN(dn) && dn === sel;
+      b.classList.toggle("is-selected", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
+  function syncExpenseDayFilterControls() {
+    renderExpenseListDayGrid();
+    syncExpenseDayGridPanelUi();
+    if (elExpenseListClearDay) {
+      elExpenseListClearDay.disabled = expenseListFilterDayNum == null;
+    }
+  }
+
+  function setExpenseListDayNumFilter(dayNumOrNull) {
+    if (dayNumOrNull === null || dayNumOrNull === undefined || dayNumOrNull === "") {
+      expenseListFilterDayNum = null;
+    } else {
+      var n = parseInt(String(dayNumOrNull), 10);
+      if (isNaN(n) || n < 1) {
+        expenseListFilterDayNum = null;
+      } else {
+        var p = parseMonthKeyParts(activeMonthKey);
+        var dim = p ? new Date(p.year, p.month, 0).getDate() : 31;
+        expenseListFilterDayNum = n <= dim ? n : null;
+      }
+    }
+    expenseListDayGridExpanded = false;
+    renderExpenseList();
+  }
+
+  function createExpenseListRowElement(e, readOnly) {
+    var li = document.createElement("li");
+    li.className = readOnly ? "expense-row expense-row-readonly" : "expense-row";
+    li.dataset.id = e.id;
+
+    var ico = document.createElement("span");
+    ico.className = "expense-cat-ico";
+    ico.textContent = getCategoryIconSym(e.category);
+    ico.title = getCategoryLabel(e.category);
+
+    var mid = document.createElement("div");
+    mid.className = "expense-row-mid";
+    var wrap = document.createElement("div");
+    wrap.className = "expense-row-line-wrap";
+    if (e.templateId) {
+      var badge = document.createElement("span");
+      badge.className = "expense-badge-fixed";
+      badge.textContent = "Cố định";
+      badge.setAttribute("aria-hidden", "true");
+      wrap.appendChild(badge);
+    }
+    var line = document.createElement("span");
+    line.className = "expense-row-line";
+    var namePart = e.name ? e.name : getCategoryLabel(e.category);
+    line.textContent = namePart;
+    line.title = getCategoryLabel(e.category) + (e.name ? " · " + e.name : "");
+    wrap.appendChild(line);
+    mid.appendChild(wrap);
+    var inputDate = formatExpenseInputDate(e);
+    if (inputDate) {
+      var dateEl = document.createElement("span");
+      dateEl.className = "expense-row-date";
+      dateEl.textContent = inputDate;
+      mid.appendChild(dateEl);
+    }
+
+    var amt = document.createElement("span");
+    amt.className = "expense-row-amt";
+    amt.textContent = formatMoneyListShort(e.amount);
+
+    var main = document.createElement("div");
+    main.className = "expense-swipe-main";
+    main.appendChild(ico);
+    main.appendChild(mid);
+    main.appendChild(amt);
+
+    if (readOnly) {
+      li.appendChild(main);
+      return li;
+    }
+
+    var actions = document.createElement("div");
+    actions.className = "expense-row-actions";
+
+    var btnEdit = document.createElement("button");
+    btnEdit.type = "button";
+    btnEdit.className = "btn-icon btn-icon-muted";
+    btnEdit.setAttribute("aria-label", "Sửa số tiền");
+    btnEdit.appendChild(iconPencilSvg());
+    btnEdit.addEventListener("click", function () {
+      openEditExpenseDialog(e.id);
+    });
+
+    actions.appendChild(btnEdit);
+    main.appendChild(actions);
+
+    var track = document.createElement("div");
+    track.className = "expense-swipe-track";
+
+    var btnDelete = document.createElement("button");
+    btnDelete.type = "button";
+    btnDelete.className = "expense-item-delete";
+    btnDelete.setAttribute("aria-label", "Xóa khoản chi");
+    btnDelete.appendChild(iconTrashSvg());
+    btnDelete.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      removeExpense(e.id);
+    });
+
+    track.appendChild(main);
+    track.appendChild(btnDelete);
+    li.appendChild(track);
+    setExpenseRowOffset(li, 0, false);
+    attachExpenseSwipe(li, main);
+    return li;
+  }
+
   function renderExpenseList() {
     elExpenseList.innerHTML = "";
     if (!state) return;
+    syncExpenseDayFilterControls();
     var rows = getVisibleExpenses();
     var totalRecords = rows.length;
+    var typeMatchCount = countExpensesMatchingTypeFilter();
     var hasRows = totalRecords > 0;
     elEmpty.hidden = hasRows;
     if (!hasRows) {
-      elEmpty.textContent =
-        expenseListFilter === "all"
-          ? "Chưa có khoản chi. Thêm ở trên."
-          : "Không có khoản chi phù hợp bộ lọc.";
+      if (typeMatchCount === 0 && expenseListFilter === "all") {
+        elEmpty.textContent = "Chưa có khoản chi. Thêm ở trên.";
+      } else if (typeMatchCount === 0) {
+        elEmpty.textContent = "Không có khoản chi phù hợp bộ lọc.";
+      } else if (expenseListFilterResolvedDayKey()) {
+        elEmpty.textContent =
+          "Không có khoản chi trong ngày đã chọn. Đổi ngày hoặc bấm × để bỏ lọc.";
+      } else {
+        elEmpty.textContent = "Không có khoản chi phù hợp bộ lọc.";
+      }
     }
     renderExpenseFilterButtons();
 
     rows.forEach(function (e) {
-      var li = document.createElement("li");
-      li.className = "expense-row";
-      li.dataset.id = e.id;
-      var track = document.createElement("div");
-      track.className = "expense-swipe-track";
-      var main = document.createElement("div");
-      main.className = "expense-swipe-main";
-
-      var ico = document.createElement("span");
-      ico.className = "expense-cat-ico";
-      ico.textContent = getCategoryIconSym(e.category);
-      ico.title = getCategoryLabel(e.category);
-
-      var mid = document.createElement("div");
-      mid.className = "expense-row-mid";
-      var wrap = document.createElement("div");
-      wrap.className = "expense-row-line-wrap";
-      if (e.templateId) {
-        var badge = document.createElement("span");
-        badge.className = "expense-badge-fixed";
-        badge.textContent = "Cố định";
-        badge.setAttribute("aria-hidden", "true");
-        wrap.appendChild(badge);
-      }
-      var line = document.createElement("span");
-      line.className = "expense-row-line";
-      var namePart = e.name ? e.name : getCategoryLabel(e.category);
-      line.textContent = namePart;
-      line.title = getCategoryLabel(e.category) + (e.name ? " · " + e.name : "");
-      wrap.appendChild(line);
-      mid.appendChild(wrap);
-      var inputDate = formatExpenseInputDate(e);
-      if (inputDate) {
-        var dateEl = document.createElement("span");
-        dateEl.className = "expense-row-date";
-        dateEl.textContent = inputDate;
-        mid.appendChild(dateEl);
-      }
-
-      var amt = document.createElement("span");
-      amt.className = "expense-row-amt";
-      amt.textContent = formatMoneyListShort(e.amount);
-
-      var actions = document.createElement("div");
-      actions.className = "expense-row-actions";
-
-      var btnEdit = document.createElement("button");
-      btnEdit.type = "button";
-      btnEdit.className = "btn-icon btn-icon-muted";
-      btnEdit.setAttribute("aria-label", "Sửa số tiền");
-      btnEdit.appendChild(iconPencilSvg());
-      btnEdit.addEventListener("click", function () {
-        openEditExpenseDialog(e.id);
-      });
-
-      actions.appendChild(btnEdit);
-      main.appendChild(ico);
-      main.appendChild(mid);
-      main.appendChild(amt);
-      main.appendChild(actions);
-
-      var btnDelete = document.createElement("button");
-      btnDelete.type = "button";
-      btnDelete.className = "expense-item-delete";
-      btnDelete.setAttribute("aria-label", "Xóa khoản chi");
-      btnDelete.appendChild(iconTrashSvg());
-      btnDelete.addEventListener("click", function (ev) {
-        ev.stopPropagation();
-        removeExpense(e.id);
-      });
-
-      track.appendChild(main);
-      track.appendChild(btnDelete);
-      li.appendChild(track);
-      setExpenseRowOffset(li, 0, false);
-      attachExpenseSwipe(li, main);
-      elExpenseList.appendChild(li);
+      elExpenseList.appendChild(createExpenseListRowElement(e));
     });
 
     var total = rows.reduce(function (sum, e) {
@@ -3346,14 +3572,31 @@
     return getCategoryLabel(e.category);
   }
 
+  function expenseMatchesTypeFilter(e) {
+    if (!e || isRowDeleted(e)) return false;
+    if (expenseListFilter === "fixed") return isFixedExpenseRow(e);
+    if (expenseListFilter === "flex") return !isFixedExpenseRow(e);
+    return true;
+  }
+
+  function countExpensesMatchingTypeFilter() {
+    if (!state || !Array.isArray(state.expenses)) return 0;
+    var n = 0;
+    state.expenses.forEach(function (e) {
+      if (expenseMatchesTypeFilter(e)) n++;
+    });
+    return n;
+  }
+
   function getVisibleExpenses() {
     if (!state || !Array.isArray(state.expenses)) return [];
-    var rows = state.expenses.filter(function (e) {
-      if (isRowDeleted(e)) return false;
-      if (expenseListFilter === "fixed") return isFixedExpenseRow(e);
-      if (expenseListFilter === "flex") return !isFixedExpenseRow(e);
-      return true;
-    });
+    var rows = state.expenses.filter(expenseMatchesTypeFilter);
+    var dk = expenseListFilterResolvedDayKey();
+    if (dk) {
+      rows = rows.filter(function (e) {
+        return dayKeyFromTs(expenseDateTs(e)) === dk;
+      });
+    }
     rows.sort(function (a, b) {
       var at = expenseDateTs(a);
       var bt = expenseDateTs(b);
@@ -3389,6 +3632,55 @@
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
   }
 
+  function formatTimeInputValueFromTs(ts) {
+    if (typeof ts !== "number" || ts <= 0) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+
+  /** Ghép ngày (YYYY-MM-DD) + giờ (HH:mm); nếu không có giờ hợp lệ thì lấy phần giờ từ fallbackTs. */
+  function parseDateTimeInputsToTs(dateStr, timeStr, fallbackTs) {
+    var dateOnly = parseDateInputToDate(dateStr);
+    if (!dateOnly) return 0;
+    var h = 12;
+    var mi = 0;
+    var s = 0;
+    var ms = 0;
+    var fbTs = typeof fallbackTs === "number" && fallbackTs > 0 ? fallbackTs : nowTs();
+    var fb = new Date(fbTs);
+    if (!isNaN(fb.getTime())) {
+      h = fb.getHours();
+      mi = fb.getMinutes();
+      s = fb.getSeconds();
+      ms = fb.getMilliseconds();
+    }
+    var tRaw = typeof timeStr === "string" ? timeStr.trim() : "";
+    if (tRaw) {
+      var m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(tRaw);
+      if (m) {
+        var hh = parseInt(m[1], 10);
+        var mm = parseInt(m[2], 10);
+        var ss = m[3] ? parseInt(m[3], 10) : 0;
+        if (hh >= 0 && hh < 24 && mm >= 0 && mm < 60 && ss >= 0 && ss < 60) {
+          h = hh;
+          mi = mm;
+          s = ss;
+          ms = 0;
+        }
+      }
+    }
+    return new Date(
+      dateOnly.getFullYear(),
+      dateOnly.getMonth(),
+      dateOnly.getDate(),
+      h,
+      mi,
+      s,
+      ms
+    ).getTime();
+  }
+
   function parseDateInputToDate(dateStr) {
     if (typeof dateStr !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
     var parts = dateStr.split("-");
@@ -3407,24 +3699,10 @@
     return out;
   }
 
-  function mergeDateWithBaseTime(dateStr, baseTs) {
-    var dateOnly = parseDateInputToDate(dateStr);
-    if (!dateOnly) return 0;
-    var base = new Date(typeof baseTs === "number" && baseTs > 0 ? baseTs : nowTs());
-    return new Date(
-      dateOnly.getFullYear(),
-      dateOnly.getMonth(),
-      dateOnly.getDate(),
-      base.getHours(),
-      base.getMinutes(),
-      base.getSeconds(),
-      base.getMilliseconds()
-    ).getTime();
-  }
-
   function resetAddExpenseDateInput() {
-    if (!elExpenseDate) return;
-    elExpenseDate.value = formatDateInputValueFromTs(nowTs());
+    var n = nowTs();
+    if (elExpenseDate) elExpenseDate.value = formatDateInputValueFromTs(n);
+    if (elExpenseTime) elExpenseTime.value = formatTimeInputValueFromTs(n);
   }
 
   function formatExpenseInputDate(e) {
@@ -3462,7 +3740,6 @@
 
   function renderReportModeButtons() {
     var map = [
-      { key: "pie", el: elReportModePie },
       { key: "jars", el: elReportModeJars },
       { key: "daily", el: elReportModeDaily },
     ];
@@ -3473,7 +3750,7 @@
       x.el.setAttribute("aria-pressed", active ? "true" : "false");
     });
     if (elReportPieView)
-      elReportPieView.hidden = reportMode !== "pie" && reportMode !== "jars";
+      elReportPieView.hidden = reportMode !== "jars";
     if (elReportDailyView) {
       elReportDailyView.hidden = reportMode !== "daily";
     }
@@ -3497,8 +3774,9 @@
   }
 
   function setReportMode(next) {
-    if (next !== "pie" && next !== "jars" && next !== "daily") return;
+    if (next !== "jars" && next !== "daily") return;
     if (next !== "jars") reportJarDrillId = null;
+    if (next !== "daily") reportDailySelectedDayKey = null;
     if (next === "daily") reportDailyNeedsAutoScroll = true;
     reportMode = next;
     renderReportModeButtons();
@@ -3965,6 +4243,7 @@
     cancelLimitEdit();
     flushIncomeFromField();
     closeSideMenu(true);
+    closeExpenseDayPicker();
     closeEditExpenseDialog();
     closeEditFixedTemplateDialog();
     closeEditCategoryDialog();
@@ -4010,6 +4289,10 @@
     reportJarDrillId = null;
     reportDailyRange = "month";
     reportDailyNeedsAutoScroll = true;
+    expenseListFilterDayNum = null;
+    expenseListDayGridSeal = "";
+    expenseListDayGridExpanded = false;
+    reportDailySelectedDayKey = null;
 
     elMonthScreenTitle.textContent = formatMonthKeyVi(key);
 
@@ -4089,10 +4372,14 @@
     var nameTrim = elName.value.trim();
     var cat = elCategory.value;
     var isFixed = elExpenseFixed && elExpenseFixed.checked;
-    var dateTs = mergeDateWithBaseTime(
-      elExpenseDate ? elExpenseDate.value : "",
-      nowTs()
-    );
+    var dateTs =
+      elExpenseDate && elExpenseDate.value
+        ? parseDateTimeInputsToTs(
+            elExpenseDate.value,
+            elExpenseTime ? elExpenseTime.value : "",
+            nowTs()
+          )
+        : 0;
     var templateId = null;
     if (isFixed) {
       templateId = "ft-" + uid();
@@ -4114,6 +4401,8 @@
     if (dateTs > 0) row.dateTs = dateTs;
     if (templateId) row.templateId = templateId;
     state.expenses.push(row);
+    var rowDayKey = dayKeyFromTs(expenseDateTs(row));
+    alignExpenseListDayFilterFromDayKey(rowDayKey);
     elName.value = "";
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
@@ -4153,10 +4442,36 @@
       setExpenseFilter("flex");
     });
   }
-  if (elReportModePie) {
-    elReportModePie.addEventListener("click", function () {
-      setReportMode("pie");
+  if (elExpenseListDayFilterToggle) {
+    elExpenseListDayFilterToggle.addEventListener("click", function () {
+      expenseListDayGridExpanded = !expenseListDayGridExpanded;
+      syncExpenseDayFilterControls();
     });
+  }
+  if (elExpenseListDayGrid && !elExpenseListDayGrid._dayGridDelegation) {
+    elExpenseListDayGrid._dayGridDelegation = true;
+    elExpenseListDayGrid.addEventListener("click", function (ev) {
+      var t = ev.target.closest(".expense-day-grid-btn");
+      if (!t || !elExpenseListDayGrid.contains(t)) return;
+      var dn = parseInt(t.dataset.dayNum, 10);
+      if (isNaN(dn)) return;
+      if (expenseListFilterDayNum === dn) setExpenseListDayNumFilter(null);
+      else setExpenseListDayNumFilter(dn);
+    });
+  }
+  if (elExpenseListClearDay) {
+    elExpenseListClearDay.addEventListener("click", function () {
+      setExpenseListDayNumFilter(null);
+    });
+  }
+  if (elExpenseDayPickerBackdrop) {
+    elExpenseDayPickerBackdrop.addEventListener("click", closeExpenseDayPicker);
+  }
+  if (elExpenseDayPickerClose) {
+    elExpenseDayPickerClose.addEventListener("click", closeExpenseDayPicker);
+  }
+  if (elExpenseDayPickerDone) {
+    elExpenseDayPickerDone.addEventListener("click", closeExpenseDayPicker);
   }
   if (elReportModeJars) {
     elReportModeJars.addEventListener("click", function () {
@@ -4386,6 +4701,7 @@
   function openEditExpenseDialog(expenseId) {
     if (!state || !elEditDialog) return;
     cancelLimitEdit();
+    closeExpenseDayPicker();
     closeEditFixedTemplateDialog();
     closeEditCategoryDialog();
     closeEditJarDialog();
@@ -4405,8 +4721,12 @@
     if (elEditExpenseName) elEditExpenseName.value = e.name || "";
     elEditAmount.value = formatAsNganDisplay(e.amount);
     updateAmountPreview(elEditAmount, elEditAmountPreview);
+    var tsForEdit = expenseDateTs(e);
     if (elEditExpenseDate) {
-      elEditExpenseDate.value = formatDateInputValueFromTs(expenseDateTs(e));
+      elEditExpenseDate.value = formatDateInputValueFromTs(tsForEdit);
+    }
+    if (elEditExpenseTime) {
+      elEditExpenseTime.value = formatTimeInputValueFromTs(tsForEdit);
     }
     if (elEditExpenseFixed) {
       elEditExpenseFixed.checked = !!e.templateId;
@@ -4428,7 +4748,7 @@
     }
     elEditDialog.hidden = false;
     elEditDialog.setAttribute("aria-hidden", "false");
-    document.body.classList.add("modal-open");
+    updateModalOpenBodyLock();
     setTimeout(function () {
       elEditAmount.focus();
       elEditAmount.select();
@@ -4441,14 +4761,7 @@
       elEditDialog.hidden = true;
       elEditDialog.setAttribute("aria-hidden", "true");
     }
-    if (
-      (!elEditFixedDialog || elEditFixedDialog.hidden) &&
-      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
-      (!elAuthDialog || elAuthDialog.hidden) &&
-      (!elEditJarDialog || elEditJarDialog.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    updateModalOpenBodyLock();
   }
 
   function closeEditFixedTemplateDialog() {
@@ -4457,19 +4770,13 @@
       elEditFixedDialog.hidden = true;
       elEditFixedDialog.setAttribute("aria-hidden", "true");
     }
-    if (
-      (!elEditDialog || elEditDialog.hidden) &&
-      (!elEditCategoryDialog || elEditCategoryDialog.hidden) &&
-      (!elAuthDialog || elAuthDialog.hidden) &&
-      (!elEditJarDialog || elEditJarDialog.hidden)
-    ) {
-      document.body.classList.remove("modal-open");
-    }
+    updateModalOpenBodyLock();
   }
 
   function openEditFixedTemplateDialog(templateId) {
     closeEditCategoryDialog();
     closeEditJarDialog();
+    closeExpenseDayPicker();
     var t = findFixedTemplate(templateId);
     if (!t || !elEditFixedDialog) return;
     editingFixedTemplateId = templateId;
@@ -4480,7 +4787,7 @@
     updateAmountPreview(elEditFixedAmount, elEditFixedAmountPreview);
     elEditFixedDialog.hidden = false;
     elEditFixedDialog.setAttribute("aria-hidden", "false");
-    document.body.classList.add("modal-open");
+    updateModalOpenBodyLock();
     setTimeout(function () {
       elEditFixedAmount.focus();
       elEditFixedAmount.select();
@@ -4533,13 +4840,16 @@
     e.name = nameTrim;
     e.amount = amount;
     if (elEditExpenseDate && elEditExpenseDate.value) {
-      var baseTs = expenseDateTs(e) || nowTs();
-      var nextDateTs = mergeDateWithBaseTime(elEditExpenseDate.value, baseTs);
+      var prevTs = expenseDateTs(e) || nowTs();
+      var timeVal = elEditExpenseTime ? elEditExpenseTime.value : "";
+      var nextDateTs = parseDateTimeInputsToTs(elEditExpenseDate.value, timeVal, prevTs);
       if (nextDateTs > 0) {
         e.dateTs = nextDateTs;
       }
     }
     e.updatedAt = nowTs();
+    var savedDayKey = dayKeyFromTs(expenseDateTs(e));
+    alignExpenseListDayFilterFromDayKey(savedDayKey);
     if (elEditExpenseFixed && elEditExpenseFixed.checked && !e.templateId) {
       var isPastMonth =
         !!activeMonthKey &&
@@ -4577,6 +4887,11 @@
       if (isLimitEditOpen()) {
         ev.preventDefault();
         cancelLimitEdit();
+        return;
+      }
+      if (elExpenseDayPickerDialog && !elExpenseDayPickerDialog.hidden) {
+        ev.preventDefault();
+        closeExpenseDayPicker();
         return;
       }
       if (elEditJarDialog && !elEditJarDialog.hidden) {
