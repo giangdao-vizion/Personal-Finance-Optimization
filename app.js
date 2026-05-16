@@ -1510,7 +1510,8 @@
   var elBtnSettingsCancelAddCategory = document.getElementById("btn-settings-cancel-add-category");
   var elSettingsAddCategoryForm = document.getElementById("settings-add-category-form");
   var elSettingsNewCategoryLabel = document.getElementById("settings-new-category-label");
-  var elSettingsNewCategoryIconSelect = document.getElementById("settings-new-category-icon-select");
+  var elSettingsNewCategoryIcons = document.getElementById("settings-new-category-icons");
+  var elSettingsNewCategoryIconId = document.getElementById("settings-new-category-icon-id");
   var elEditCategoryDialog = document.getElementById("edit-category-dialog");
   var elEditCategoryBackdrop = document.getElementById("edit-category-backdrop");
   var elEditCategoryLabelInput = document.getElementById("edit-category-label-input");
@@ -1518,6 +1519,7 @@
   var elEditCategoryIconId = document.getElementById("edit-category-icon-id");
   var elEditCategorySave = document.getElementById("edit-category-save");
   var elEditCategoryCancel = document.getElementById("edit-category-cancel");
+  var elEditCategoryDelete = document.getElementById("edit-category-delete");
 
   var elMonthJarsCard = document.getElementById("month-jars-card");
   var elMonthJarsList = document.getElementById("month-jars-list");
@@ -1542,6 +1544,7 @@
   var elEditJarCategories = document.getElementById("edit-jar-categories");
   var elEditJarSave = document.getElementById("edit-jar-save");
   var elEditJarCancel = document.getElementById("edit-jar-cancel");
+  var elEditJarDelete = document.getElementById("edit-jar-delete");
 
   var elEditFixedDialog = document.getElementById("edit-fixed-template-dialog");
   var elEditFixedBackdrop = document.getElementById("edit-fixed-template-backdrop");
@@ -1552,6 +1555,7 @@
   var elEditFixedAmountPreview = document.getElementById("edit-fixed-template-amount-preview");
   var elEditFixedSave = document.getElementById("edit-fixed-template-save");
   var elEditFixedCancel = document.getElementById("edit-fixed-template-cancel");
+  var elEditFixedDelete = document.getElementById("edit-fixed-template-delete");
 
   var elFixedTemplatesList = document.getElementById("fixed-templates-list");
 
@@ -1763,39 +1767,178 @@
     return out;
   }
 
-  function swapArrayIndices(arr, i, j) {
-    if (!arr || i === j) return false;
-    if (i < 0 || j < 0 || i >= arr.length || j >= arr.length) return false;
-    var t = arr[i];
-    arr[i] = arr[j];
-    arr[j] = t;
+  /** Di chuyển phần tử trong mảng (thứ tự hiển thị giống kéo-thả vào dòng đích). */
+  function reorderArrayMove(arr, fromIndex, toIndex) {
+    if (!arr || fromIndex === toIndex) return false;
+    if (
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= arr.length ||
+      toIndex >= arr.length
+    ) {
+      return false;
+    }
+    var item = arr.splice(fromIndex, 1)[0];
+    var insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+    arr.splice(insertAt, 0, item);
     return true;
   }
 
-  function appendReorderControlColumn(parentEl, index, len, onSwapWithIndex) {
-    var col = document.createElement("div");
-    col.className = "settings-reorder-col";
-    var btnUp = document.createElement("button");
-    btnUp.type = "button";
-    btnUp.className = "btn-icon btn-icon-muted settings-reorder-btn";
-    btnUp.setAttribute("aria-label", "Đưa lên");
-    btnUp.disabled = index <= 0;
-    btnUp.appendChild(iconChevronUpSvg());
-    btnUp.addEventListener("click", function () {
-      if (index > 0) onSwapWithIndex(index - 1);
+  /** Đổi thứ tự các khoản cố định (chỉ hàng chưa xóa), giữ nguyên chỗ các bản ghi đã xóa (tombstone). */
+  function reorderVisibleFixedTemplates(fromVis, toVis) {
+    if (fromVis === toVis) return false;
+    var vis = [];
+    var i;
+    for (i = 0; i < app.fixedTemplates.length; i++) {
+      if (!isRowDeleted(app.fixedTemplates[i])) vis.push(app.fixedTemplates[i]);
+    }
+    if (
+      fromVis < 0 ||
+      toVis < 0 ||
+      fromVis >= vis.length ||
+      toVis >= vis.length
+    ) {
+      return false;
+    }
+    var moved = vis.splice(fromVis, 1)[0];
+    var insertAt = fromVis < toVis ? toVis - 1 : toVis;
+    vis.splice(insertAt, 0, moved);
+    var v = 0;
+    for (i = 0; i < app.fixedTemplates.length; i++) {
+      if (!isRowDeleted(app.fixedTemplates[i])) {
+        app.fixedTemplates[i] = vis[v++];
+      }
+    }
+    return true;
+  }
+
+  function iconDragGripSvg() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "settings-drag-grip-svg");
+    svg.setAttribute("width", "22");
+    svg.setAttribute("height", "22");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    var g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.setAttribute("fill", "none");
+    g.setAttribute("stroke", "currentColor");
+    g.setAttribute("stroke-width", "2.5");
+    g.setAttribute("stroke-linecap", "round");
+    var l1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l1.setAttribute("x1", "5");
+    l1.setAttribute("y1", "9");
+    l1.setAttribute("x2", "19");
+    l1.setAttribute("y2", "9");
+    var l2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l2.setAttribute("x1", "5");
+    l2.setAttribute("y1", "15");
+    l2.setAttribute("x2", "19");
+    l2.setAttribute("y2", "15");
+    g.appendChild(l1);
+    g.appendChild(l2);
+    svg.appendChild(g);
+    return svg;
+  }
+
+  var settingsPointerDrag = null;
+
+  function settingsPointerDragDetachGlobals() {
+    document.removeEventListener("pointermove", settingsPointerDragOnMove);
+    document.removeEventListener("pointerup", settingsPointerDragOnEnd);
+    document.removeEventListener("pointercancel", settingsPointerDragOnEnd);
+  }
+
+  function settingsPointerDragOnMove(ev) {
+    if (!settingsPointerDrag || ev.pointerId !== settingsPointerDrag.pointerId) return;
+    ev.preventDefault();
+    var ul = settingsPointerDrag.ul;
+    var hit = document.elementFromPoint(ev.clientX, ev.clientY);
+    var row = hit && hit.closest ? hit.closest("[data-drag-index]") : null;
+    ul.querySelectorAll(".is-drag-drop-target").forEach(function (el) {
+      el.classList.remove("is-drag-drop-target");
     });
-    var btnDown = document.createElement("button");
-    btnDown.type = "button";
-    btnDown.className = "btn-icon btn-icon-muted settings-reorder-btn";
-    btnDown.setAttribute("aria-label", "Đưa xuống");
-    btnDown.disabled = index >= len - 1;
-    btnDown.appendChild(iconChevronDownSvg());
-    btnDown.addEventListener("click", function () {
-      if (index < len - 1) onSwapWithIndex(index + 1);
+    if (row && ul.contains(row) && row !== settingsPointerDrag.row) {
+      row.classList.add("is-drag-drop-target");
+    }
+  }
+
+  function settingsPointerDragOnEnd(ev) {
+    if (!settingsPointerDrag || ev.pointerId !== settingsPointerDrag.pointerId) return;
+    var sess = settingsPointerDrag;
+    settingsPointerDrag = null;
+    settingsPointerDragDetachGlobals();
+    try {
+      if (sess.handle && sess.pointerId != null) {
+        sess.handle.releasePointerCapture(sess.pointerId);
+      }
+    } catch (eRel) {}
+
+    sess.row.classList.remove("is-dragging-source");
+    sess.ul.querySelectorAll(".is-drag-drop-target").forEach(function (el) {
+      el.classList.remove("is-drag-drop-target");
     });
-    col.appendChild(btnUp);
-    col.appendChild(btnDown);
-    parentEl.appendChild(col);
+    document.body.classList.remove("settings-pointer-dragging");
+
+    if (ev.type === "pointercancel") return;
+
+    var hit = document.elementFromPoint(ev.clientX, ev.clientY);
+    var row = hit && hit.closest ? hit.closest("[data-drag-index]") : null;
+    var toIdx =
+      row && sess.ul.contains(row)
+        ? parseInt(row.getAttribute("data-drag-index"), 10)
+        : NaN;
+    if (!isNaN(toIdx) && toIdx !== sess.fromIdx) {
+      sess.onReorder(sess.fromIdx, toIdx);
+    }
+  }
+
+  /**
+   * Cầm kéo chỉ từ handle (div); dùng Pointer Events để chạy trên mobile / Safari (HTML5 drag hay lỗi với nút).
+   */
+  function attachDragHandleToRow(li, dragIndex, ul, onReorder, listLength) {
+    li.setAttribute("data-drag-index", String(dragIndex));
+    var handle = document.createElement("div");
+    handle.className = "settings-drag-handle";
+    handle.setAttribute("role", "button");
+    handle.setAttribute("tabindex", "0");
+    handle.setAttribute(
+      "aria-label",
+      listLength > 1 ? "Giữ và kéo để đổi thứ tự" : "Chỉ có một mục — không đổi thứ tự được"
+    );
+    handle.appendChild(iconDragGripSvg());
+    var canDrag = listLength > 1;
+    if (!canDrag) {
+      handle.classList.add("settings-drag-handle-static");
+      handle.removeAttribute("tabindex");
+      handle.setAttribute("aria-disabled", "true");
+    }
+    handle.addEventListener("pointerdown", function (ev) {
+      if (!canDrag || ev.button !== 0) return;
+      if (settingsPointerDrag) return;
+      ev.preventDefault();
+      settingsPointerDrag = {
+        ul: ul,
+        fromIdx: dragIndex,
+        onReorder: onReorder,
+        pointerId: ev.pointerId,
+        row: li,
+        handle: handle,
+      };
+      document.addEventListener("pointermove", settingsPointerDragOnMove, { passive: false });
+      document.addEventListener("pointerup", settingsPointerDragOnEnd);
+      document.addEventListener("pointercancel", settingsPointerDragOnEnd);
+      li.classList.add("is-dragging-source");
+      document.body.classList.add("settings-pointer-dragging");
+      try {
+        handle.setPointerCapture(ev.pointerId);
+      } catch (eCap) {}
+    });
+    return handle;
+  }
+
+  function afterFixedTemplatesReordered() {
+    saveAppData();
+    renderFixedTemplatesList();
   }
 
   function afterCategoriesReordered() {
@@ -1829,20 +1972,29 @@
       var li = document.createElement("li");
       li.className = "settings-jar-row";
 
+      var handleJar = attachDragHandleToRow(
+        li,
+        jIdx,
+        elSettingsJarsList,
+        function (from, to) {
+          if (!reorderArrayMove(app.spendingJars, from, to)) return;
+          afterJarsReordered();
+        },
+        jarsLen
+      );
+
       var pic = document.createElement("div");
       pic.className = "settings-jar-pig-wrap";
       pic.appendChild(piggyBankUseSvg(j.color, 44));
 
-      appendReorderControlColumn(li, jIdx, jarsLen, function (otherIdx) {
-        if (!swapArrayIndices(app.spendingJars, jIdx, otherIdx)) return;
-        afterJarsReordered();
-      });
-
       var mid = document.createElement("div");
       mid.className = "settings-jar-mid";
+      var titleRow = document.createElement("div");
+      titleRow.className = "settings-jar-title-row";
       var title = document.createElement("span");
       title.className = "settings-jar-title";
       title.textContent = j.label;
+      titleRow.appendChild(title);
       var meta = document.createElement("span");
       meta.className = "settings-jar-meta";
       var limText =
@@ -1851,30 +2003,26 @@
           : "Chưa đặt hạn mức";
       var nCat = (j.categoryIds || []).length;
       meta.textContent = limText + " · " + nCat + " danh mục";
-      mid.appendChild(title);
+      mid.appendChild(titleRow);
       mid.appendChild(meta);
 
       var actions = document.createElement("div");
       actions.className = "settings-jar-actions";
       var btnEdit = document.createElement("button");
       btnEdit.type = "button";
-      btnEdit.className = "btn-icon btn-icon-muted";
+      btnEdit.className = "btn-icon btn-icon-muted settings-jar-edit-btn";
       btnEdit.setAttribute("aria-label", "Sửa hũ");
-      btnEdit.appendChild(iconPencilSvg());
+      var pencilIco = iconPencilSvg();
+      pencilIco.setAttribute("width", "17");
+      pencilIco.setAttribute("height", "17");
+      btnEdit.appendChild(pencilIco);
       btnEdit.addEventListener("click", function () {
         openEditJarDialog(j.id);
       });
-      var btnDel = document.createElement("button");
-      btnDel.type = "button";
-      btnDel.className = "btn-icon btn-icon-danger";
-      btnDel.setAttribute("aria-label", "Xóa hũ");
-      btnDel.appendChild(iconTrashSvg());
-      btnDel.addEventListener("click", function () {
-        deleteJarFromSettings(j.id);
-      });
-      actions.appendChild(btnEdit);
-      actions.appendChild(btnDel);
 
+      actions.appendChild(btnEdit);
+
+      li.appendChild(handleJar);
       li.appendChild(pic);
       li.appendChild(mid);
       li.appendChild(actions);
@@ -1910,7 +2058,7 @@
 
   function resetSettingsAddCategoryForm() {
     if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.value = "";
-    if (elSettingsNewCategoryIconSelect) elSettingsNewCategoryIconSelect.value = "food";
+    if (elSettingsNewCategoryIconId) elSettingsNewCategoryIconId.value = "food";
     renderSettingsNewCategoryIconPicker();
   }
 
@@ -2116,16 +2264,18 @@
         "Xóa hũ này? Các khoản chi đã nhập không bị xóa; chỉ bỏ nhóm thống kê theo hũ."
       )
     ) {
-      return;
+      return false;
     }
     var next = app.spendingJars.filter(function (j) {
       return j.id !== jarId;
     });
-    if (next.length === app.spendingJars.length) return;
+    if (next.length === app.spendingJars.length) return false;
     app.spendingJars = next;
     saveAppData();
     renderSettingsJarsList();
+    renderNewJarCategoryCheckboxes();
     if (activeMonthKey && state) persistAndRender();
+    return true;
   }
 
   function renderIconPicker(containerEl, hiddenEl, selectedId) {
@@ -2163,22 +2313,9 @@
   }
 
   function renderSettingsNewCategoryIconPicker() {
-    if (!elSettingsNewCategoryIconSelect) return;
-    var current = elSettingsNewCategoryIconSelect.value || "food";
-    elSettingsNewCategoryIconSelect.innerHTML = "";
-    ICON_PRESETS.forEach(function (p) {
-      var opt = document.createElement("option");
-      opt.value = p.id;
-      opt.textContent = p.sym;
-      opt.title = ICON_PRESET_NAMES[p.id] || p.id;
-      elSettingsNewCategoryIconSelect.appendChild(opt);
-    });
-    elSettingsNewCategoryIconSelect.value = current;
-    if (!elSettingsNewCategoryIconSelect.value) {
-      elSettingsNewCategoryIconSelect.value = "food";
-    }
-    var selected = ICON_PRESET_NAMES[elSettingsNewCategoryIconSelect.value] || "Biểu tượng";
-    elSettingsNewCategoryIconSelect.title = "Biểu tượng: " + selected;
+    if (!elSettingsNewCategoryIcons || !elSettingsNewCategoryIconId) return;
+    var current = elSettingsNewCategoryIconId.value || "food";
+    renderIconPicker(elSettingsNewCategoryIcons, elSettingsNewCategoryIconId, current);
   }
 
   function renderSettingsCategoriesList() {
@@ -2194,11 +2331,6 @@
       sym.textContent = iconIdToSym(c.iconId);
       sym.setAttribute("aria-hidden", "true");
 
-      appendReorderControlColumn(li, cIdx, catLen, function (otherIdx) {
-        if (!swapArrayIndices(app.categories, cIdx, otherIdx)) return;
-        afterCategoriesReordered();
-      });
-
       var mid = document.createElement("div");
       mid.className = "settings-category-mid";
       var title = document.createElement("span");
@@ -2206,29 +2338,31 @@
       title.textContent = c.label;
       mid.appendChild(title);
 
+      var handleCat = attachDragHandleToRow(
+        li,
+        cIdx,
+        elSettingsCategoriesList,
+        function (from, to) {
+          if (!reorderArrayMove(app.categories, from, to)) return;
+          afterCategoriesReordered();
+        },
+        catLen
+      );
+
       var actions = document.createElement("div");
       actions.className = "settings-category-actions";
 
       var btnEdit = document.createElement("button");
       btnEdit.type = "button";
-      btnEdit.className = "btn-icon btn-icon-muted";
+      btnEdit.className = "btn-icon btn-icon-muted settings-category-edit-btn";
       btnEdit.setAttribute("aria-label", "Sửa danh mục");
       btnEdit.appendChild(iconPencilSvg());
       btnEdit.addEventListener("click", function () {
         openEditCategoryDialog(c.id);
       });
 
-      var btnDel = document.createElement("button");
-      btnDel.type = "button";
-      btnDel.className = "btn-icon btn-icon-danger";
-      btnDel.setAttribute("aria-label", "Xóa danh mục");
-      btnDel.appendChild(iconTrashSvg());
-      btnDel.addEventListener("click", function () {
-        deleteCategoryFromSettings(c.id);
-      });
-
       actions.appendChild(btnEdit);
-      actions.appendChild(btnDel);
+      li.appendChild(handleCat);
       li.appendChild(sym);
       li.appendChild(mid);
       li.appendChild(actions);
@@ -2239,10 +2373,10 @@
   function deleteCategoryFromSettings(id) {
     if (app.categories.length <= 1) {
       window.alert("Cần giữ ít nhất một danh mục.");
-      return;
+      return false;
     }
     if (!confirm("Xóa danh mục này? Mọi khoản chi và khoản cố định đang dùng danh mục này sẽ chuyển sang danh mục khác.")) {
-      return;
+      return false;
     }
     var rest = app.categories.filter(function (c) {
       return c.id !== id;
@@ -2261,6 +2395,7 @@
     } else {
       renderFixedTemplatesList();
     }
+    return true;
   }
 
   function closeEditCategoryDialog() {
@@ -3216,28 +3351,6 @@
     return svg;
   }
 
-  function iconChevronUpSvg() {
-    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("class", "icon-svg");
-    svg.setAttribute("width", "18");
-    svg.setAttribute("height", "18");
-    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-    use.setAttribute("href", "#icon-chevron-up");
-    svg.appendChild(use);
-    return svg;
-  }
-
-  function iconChevronDownSvg() {
-    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("class", "icon-svg");
-    svg.setAttribute("width", "18");
-    svg.setAttribute("height", "18");
-    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-    use.setAttribute("href", "#icon-chevron-down");
-    svg.appendChild(use);
-    return svg;
-  }
-
   function removeFixedTemplateById(templateId) {
     var t = findFixedTemplate(templateId);
     if (!t) return;
@@ -3266,7 +3379,8 @@
       ul.appendChild(empty);
       return;
     }
-    visibleTemplates.forEach(function (t) {
+    var visLen = visibleTemplates.length;
+    visibleTemplates.forEach(function (t, visIdx) {
       var li = document.createElement("li");
       li.className = "fixed-template-row";
 
@@ -3279,41 +3393,62 @@
       var sub = document.createElement("span");
       sub.className = "fixed-template-row-amt";
       sub.textContent = formatMoneyVND(t.amount);
-      mid.appendChild(title);
-      mid.appendChild(sub);
 
-      var btnDel = document.createElement("button");
-      btnDel.type = "button";
-      btnDel.className = "btn-icon btn-icon-danger";
-      btnDel.setAttribute("aria-label", "Xóa khỏi khoản cố định");
-      btnDel.appendChild(iconTrashSvg());
-      btnDel.addEventListener("click", function () {
-        if (
-          !confirm(
-            "Xóa khoản cố định này? Các tháng sau sẽ không tự thêm nữa. Dòng trong các tháng giữ nguyên — bạn có thể xóa tay trong danh sách chi."
-          )
-        ) {
-          return;
-        }
-        removeFixedTemplateById(t.id);
-      });
+      var line = document.createElement("div");
+      line.className = "fixed-template-row-line";
+
+      if (showEdit) {
+        var titleHead = document.createElement("div");
+        titleHead.className = "fixed-template-row-title-head";
+        var handleFx = attachDragHandleToRow(
+          li,
+          visIdx,
+          ul,
+          function (from, to) {
+            if (!reorderVisibleFixedTemplates(from, to)) return;
+            afterFixedTemplatesReordered();
+          },
+          visLen
+        );
+        titleHead.appendChild(handleFx);
+        titleHead.appendChild(title);
+        line.appendChild(titleHead);
+      } else {
+        line.appendChild(title);
+      }
+      line.appendChild(sub);
+      mid.appendChild(line);
 
       if (showEdit) {
         var actions = document.createElement("div");
         actions.className = "fixed-template-row-actions";
         var btnEdit = document.createElement("button");
         btnEdit.type = "button";
-        btnEdit.className = "btn-icon btn-icon-muted";
+        btnEdit.className = "btn-icon btn-icon-muted settings-fixed-edit-btn";
         btnEdit.setAttribute("aria-label", "Sửa khoản cố định");
         btnEdit.appendChild(iconPencilSvg());
         btnEdit.addEventListener("click", function () {
           openEditFixedTemplateDialog(t.id);
         });
         actions.appendChild(btnEdit);
-        actions.appendChild(btnDel);
         li.appendChild(mid);
         li.appendChild(actions);
       } else {
+        var btnDel = document.createElement("button");
+        btnDel.type = "button";
+        btnDel.className = "btn-icon btn-icon-danger";
+        btnDel.setAttribute("aria-label", "Xóa khỏi khoản cố định");
+        btnDel.appendChild(iconTrashSvg());
+        btnDel.addEventListener("click", function () {
+          if (
+            !confirm(
+              "Xóa khoản cố định này? Các tháng sau sẽ không tự thêm nữa. Dòng trong các tháng giữ nguyên — bạn có thể xóa tay trong danh sách chi."
+            )
+          ) {
+            return;
+          }
+          removeFixedTemplateById(t.id);
+        });
         li.appendChild(mid);
         li.appendChild(btnDel);
       }
@@ -4546,7 +4681,7 @@
         return;
       }
       if (lab.length > 40) lab = lab.slice(0, 40);
-      var iconId = elSettingsNewCategoryIconSelect ? elSettingsNewCategoryIconSelect.value : "pin";
+      var iconId = elSettingsNewCategoryIconId ? elSettingsNewCategoryIconId.value : "food";
       app.categories.push(
         normalizeCategoryRow({ id: catUid(), label: lab, iconId: iconId })
       );
@@ -4556,12 +4691,6 @@
       refreshAllCategorySelects();
       if (activeMonthKey && state) persistAndRender();
       setSettingsAddCategoryPanelOpen(false);
-    });
-  }
-  if (elSettingsNewCategoryIconSelect) {
-    elSettingsNewCategoryIconSelect.addEventListener("change", function () {
-      var selected = ICON_PRESET_NAMES[elSettingsNewCategoryIconSelect.value] || "Biểu tượng";
-      elSettingsNewCategoryIconSelect.title = "Biểu tượng: " + selected;
     });
   }
 
@@ -4644,6 +4773,12 @@
   if (elEditJarSave) elEditJarSave.addEventListener("click", saveEditJarDialog);
   if (elEditJarCancel) elEditJarCancel.addEventListener("click", closeEditJarDialog);
   if (elEditJarBackdrop) elEditJarBackdrop.addEventListener("click", closeEditJarDialog);
+  if (elEditJarDelete) {
+    elEditJarDelete.addEventListener("click", function () {
+      if (!editingJarId) return;
+      if (deleteJarFromSettings(editingJarId)) closeEditJarDialog();
+    });
+  }
   if (elEditJarLimit) {
     elEditJarLimit.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter") {
@@ -4656,6 +4791,12 @@
   if (elEditCategorySave) elEditCategorySave.addEventListener("click", saveEditCategoryDialog);
   if (elEditCategoryCancel) elEditCategoryCancel.addEventListener("click", closeEditCategoryDialog);
   if (elEditCategoryBackdrop) elEditCategoryBackdrop.addEventListener("click", closeEditCategoryDialog);
+  if (elEditCategoryDelete) {
+    elEditCategoryDelete.addEventListener("click", function () {
+      if (!editingCategoryId) return;
+      if (deleteCategoryFromSettings(editingCategoryId)) closeEditCategoryDialog();
+    });
+  }
   if (elEditCategoryLabelInput) {
     elEditCategoryLabelInput.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter") {
@@ -4691,6 +4832,20 @@
   elEditFixedSave.addEventListener("click", saveEditFixedTemplateDialog);
   elEditFixedCancel.addEventListener("click", closeEditFixedTemplateDialog);
   elEditFixedBackdrop.addEventListener("click", closeEditFixedTemplateDialog);
+  if (elEditFixedDelete) {
+    elEditFixedDelete.addEventListener("click", function () {
+      if (!editingFixedTemplateId) return;
+      if (
+        !confirm(
+          "Xóa khoản cố định này? Các tháng sau sẽ không tự thêm nữa. Dòng trong các tháng giữ nguyên — bạn có thể xóa tay trong danh sách chi."
+        )
+      ) {
+        return;
+      }
+      removeFixedTemplateById(editingFixedTemplateId);
+      closeEditFixedTemplateDialog();
+    });
+  }
   elEditFixedAmount.addEventListener("keydown", function (ev) {
     if (ev.key === "Enter") {
       ev.preventDefault();

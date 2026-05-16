@@ -77,7 +77,7 @@
     </header>
 
     <section id="summary-card" class="card summary-card card-elevated" aria-labelledby="summary-heading">
-      <h2 id="summary-heading" class="card-title">Tổng quan tháng</h2>
+      <h2 id="summary-heading" class="card-title">Tổng quan</h2>
       <dl class="summary-unified">
         <div class="summary-row summary-row-limit">
           <dt>Hạn mức</dt>
@@ -270,7 +270,7 @@
 
     <details id="month-jars-card" class="card jars-card collapsible-card" hidden aria-labelledby="month-jars-heading">
       <summary class="collapsible-summary">
-        <h2 id="month-jars-heading" class="card-title collapsible-summary-title">Hũ chi tiêu (tháng này)</h2>
+        <h2 id="month-jars-heading" class="card-title collapsible-summary-title">Hũ chi tiêu</h2>
         <span class="collapsible-chevron" aria-hidden="true">
           <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
         </span>
@@ -283,7 +283,7 @@
 
     <details class="card report-card collapsible-card">
       <summary class="collapsible-summary">
-        <h2 id="report-heading" class="card-title collapsible-summary-title">Báo cáo phân bổ chi tiêu tháng</h2>
+        <h2 id="report-heading" class="card-title collapsible-summary-title">Báo cáo</h2>
         <span class="collapsible-chevron" aria-hidden="true">
           <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
         </span>
@@ -400,21 +400,21 @@
       </button>
       <div id="settings-add-category-panel" class="settings-add-category-panel" hidden aria-hidden="true">
         <form id="settings-add-category-form" class="settings-add-category-form">
+          <label class="field">
+            <span class="field-label">Tên danh mục</span>
+            <input
+              type="text"
+              id="settings-new-category-label"
+              maxlength="40"
+              required
+              placeholder="Ví dụ: Giải trí"
+              autocomplete="off"
+            />
+          </label>
           <div class="field">
-            <span class="field-label">Tạo danh mục mới</span>
-            <div class="settings-add-category-group">
-              <input
-                type="text"
-                id="settings-new-category-label"
-                maxlength="40"
-                required
-                placeholder="Ví dụ: Giải trí"
-                autocomplete="off"
-              />
-              <div class="select-wrap settings-icon-select-wrap">
-                <select id="settings-new-category-icon-select" aria-label="Chọn biểu tượng"></select>
-              </div>
-            </div>
+            <span class="field-label">Biểu tượng</span>
+            <div id="settings-new-category-icons" class="icon-picker"></div>
+            <input type="hidden" id="settings-new-category-icon-id" value="food" />
           </div>
           <div class="settings-add-category-form-actions">
             <button type="submit" class="btn btn-primary btn-block">Thêm danh mục</button>
@@ -585,6 +585,11 @@
         <button type="button" id="edit-jar-cancel" class="btn btn-ghost btn-block">Hủy</button>
         <button type="button" id="edit-jar-save" class="btn btn-primary btn-block">Lưu</button>
       </div>
+      <div class="modal-secondary-actions">
+        <button type="button" id="edit-jar-delete" class="btn btn-ghost btn-block edit-jar-delete-btn">
+          Xóa hũ
+        </button>
+      </div>
     </div>
   </div>
 
@@ -609,6 +614,11 @@
       <div class="modal-actions">
         <button type="button" id="edit-category-cancel" class="btn btn-ghost btn-block">Hủy</button>
         <button type="button" id="edit-category-save" class="btn btn-primary btn-block">Lưu</button>
+      </div>
+      <div class="modal-secondary-actions">
+        <button type="button" id="edit-category-delete" class="btn btn-ghost btn-block edit-category-delete-btn">
+          Xóa danh mục
+        </button>
       </div>
     </div>
   </div>
@@ -642,6 +652,11 @@
       <div class="modal-actions">
         <button type="button" id="edit-fixed-template-cancel" class="btn btn-ghost btn-block">Hủy</button>
         <button type="button" id="edit-fixed-template-save" class="btn btn-primary btn-block">Lưu</button>
+      </div>
+      <div class="modal-secondary-actions">
+        <button type="button" id="edit-fixed-template-delete" class="btn btn-ghost btn-block edit-fixed-template-delete-btn">
+          Xóa khoản cố định
+        </button>
       </div>
     </div>
   </div>
