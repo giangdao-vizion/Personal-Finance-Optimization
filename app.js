@@ -1491,6 +1491,7 @@
   var elBtnCloseSettings = document.getElementById("btn-close-settings");
   var elSettingsDefaultLimit = document.getElementById("settings-default-limit");
   var elSettingsDefaultLimitPreview = document.getElementById("settings-default-limit-preview");
+  var elSettingsDefaultLimitField = document.querySelector(".settings-default-limit-field");
   var elSettingsDefaultLimitView = document.getElementById("settings-default-limit-view");
   var elSettingsDefaultLimitDisplay = document.getElementById("settings-default-limit-display");
   var elSettingsDefaultLimitEditRow = document.getElementById("settings-default-limit-edit-row");
@@ -2309,6 +2310,7 @@
     elSettingsDefaultLimitEditRow.hidden = true;
     elSettingsDefaultLimitView.hidden = false;
     if (elSettingsDefaultLimitEditHint) elSettingsDefaultLimitEditHint.hidden = true;
+    if (elSettingsDefaultLimitField) elSettingsDefaultLimitField.classList.remove("is-editing");
     if (elBtnSettingsDefaultLimitEdit) {
       elBtnSettingsDefaultLimitEdit.setAttribute("aria-expanded", "false");
     }
@@ -2331,6 +2333,7 @@
     elSettingsDefaultLimitView.hidden = true;
     elSettingsDefaultLimitEditRow.hidden = false;
     if (elSettingsDefaultLimitEditHint) elSettingsDefaultLimitEditHint.hidden = false;
+    if (elSettingsDefaultLimitField) elSettingsDefaultLimitField.classList.add("is-editing");
     if (elBtnSettingsDefaultLimitEdit) {
       elBtnSettingsDefaultLimitEdit.setAttribute("aria-expanded", "true");
     }
@@ -5344,6 +5347,7 @@
   bindAmountPreview(elAmount, elExpensePreview);
   bindAmountPreview(elEditAmount, elEditAmountPreview);
   bindAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+  closeSettingsDefaultLimitEdit();
   refreshSettingsDefaultLimitDisplay();
   bindAmountPreview(elSettingsAddFixedAmount, elSettingsAddFixedAmountPreview);
   bindAmountPreview(elEditFixedAmount, elEditFixedAmountPreview);

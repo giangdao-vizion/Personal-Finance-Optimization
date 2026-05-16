@@ -79,6 +79,10 @@ body {
   display: none !important;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .icon-svg {
   display: block;
   flex-shrink: 0;
@@ -669,6 +673,15 @@ body.modal-open {
 
 .settings-default-limit-slot {
   min-height: 44px;
+}
+
+.settings-default-limit-field:not(.is-editing) #settings-default-limit-edit-row,
+.settings-default-limit-field:not(.is-editing) #settings-default-limit-edit-hint {
+  display: none !important;
+}
+
+.settings-default-limit-field.is-editing #settings-default-limit-view {
+  display: none !important;
 }
 
 .settings-default-limit-view {
