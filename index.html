@@ -44,6 +44,9 @@
     <symbol id="icon-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
     </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12l5 5L20 7" />
+    </symbol>
     <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 3L15.5 5.94L19.79 7.5L19 12L19.79 16.5L15.5 18.06L12 21L8.5 18.06L4.21 16.5L5 12L4.21 7.5L8.5 5.94L12 3z" />
       <circle cx="12" cy="12" r="3.25" />
@@ -268,19 +271,6 @@
       <p id="empty-state" class="empty-state" hidden>Chưa có khoản chi. Thêm ở trên.</p>
     </section>
 
-    <details id="month-jars-card" class="card jars-card collapsible-card" hidden aria-labelledby="month-jars-heading">
-      <summary class="collapsible-summary">
-        <h2 id="month-jars-heading" class="card-title collapsible-summary-title">Hũ chi tiêu</h2>
-        <span class="collapsible-chevron" aria-hidden="true">
-          <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
-        </span>
-      </summary>
-      <div class="collapsible-panel">
-        <p class="field-hint jars-month-hint">Tổng chi theo từng hũ bạn tạo trong Cài đặt. Các danh mục chưa gắn hũ nào hiển thị trong hũ &quot;Tổng hợp&quot;.</p>
-        <ul id="month-jars-list" class="month-jars-list"></ul>
-      </div>
-    </details>
-
     <details class="card report-card collapsible-card">
       <summary class="collapsible-summary">
         <h2 id="report-heading" class="card-title collapsible-summary-title">Báo cáo</h2>
@@ -294,12 +284,6 @@
           <button type="button" id="report-mode-daily" class="expense-filter-btn" aria-pressed="false">Theo ngày</button>
         </div>
         <div id="report-pie-view" class="report-view">
-          <div id="report-jar-pie-toolbar" class="report-jar-pie-toolbar" hidden>
-            <button type="button" id="report-jar-pie-back" class="btn btn-ghost btn-sm report-jar-pie-back" hidden>
-              ← Tất cả hũ
-            </button>
-            <p id="report-jar-pie-hint" class="report-jar-pie-hint"></p>
-          </div>
           <div class="pie-chart-wrap" id="pie-chart-wrap">
             <p id="pie-chart-empty" class="pie-chart-empty">Chưa có khoản chi — biểu đồ sẽ hiện khi bạn thêm dữ liệu.</p>
             <div id="pie-chart-body" class="pie-chart-body" hidden>
@@ -315,7 +299,7 @@
                 <g id="expense-pie-slice-labels" aria-hidden="true"></g>
                 <g id="expense-pie-center" aria-hidden="true"></g>
               </svg>
-              <ul id="expense-pie-legend" class="pie-legend"></ul>
+              <ul id="expense-pie-legend" class="pie-legend report-jars-list"></ul>
             </div>
           </div>
         </div>
@@ -354,20 +338,61 @@
     <section class="card" aria-labelledby="settings-limit-heading">
       <h2 id="settings-limit-heading" class="card-title">Hạn mức chi tiêu mặc định</h2>
       <p class="field-hint settings-hint">Áp dụng cho các tháng bạn chưa chỉnh hạn mức riêng. Tháng đã chỉnh vẫn giữ số của tháng đó.</p>
-      <label class="field">
-        <span class="field-label">Số tiền (nghìn đồng)</span>
-        <div class="amount-input-wrap">
-          <span id="settings-default-limit-preview" class="amount-preview" hidden aria-hidden="true"></span>
-          <input
-            type="text"
-            id="settings-default-limit"
-            class="amount-input"
-            inputmode="decimal"
-            autocomplete="off"
-            placeholder="0 = chưa đặt mặc định"
-          />
+      <div class="field settings-default-limit-field">
+        <div class="settings-default-limit-row">
+          <div class="settings-default-limit-slot">
+            <div id="settings-default-limit-view" class="settings-default-limit-view">
+              <span id="settings-default-limit-display" class="settings-default-limit-display is-unset">Chưa đặt mặc định</span>
+              <button
+                type="button"
+                id="btn-settings-default-limit-edit"
+                class="btn-icon btn-icon-muted settings-default-limit-edit-btn"
+                aria-label="Sửa hạn mức mặc định"
+                aria-expanded="false"
+                aria-controls="settings-default-limit-edit-row"
+              >
+                <svg class="icon-svg" width="20" height="20" aria-hidden="true"><use href="#icon-pencil" /></svg>
+              </button>
+            </div>
+            <div id="settings-default-limit-edit-row" class="settings-default-limit-input-group" hidden>
+              <div class="amount-input-wrap settings-default-limit-input-wrap">
+                <span id="settings-default-limit-preview" class="amount-preview" hidden aria-hidden="true"></span>
+                <input
+                  type="text"
+                  id="settings-default-limit"
+                  class="amount-input settings-default-limit-input"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  enterkeyhint="done"
+                  placeholder="Ví dụ: 25000"
+                  aria-label="Hạn mức mặc định (nghìn đồng)"
+                />
+              </div>
+              <div class="settings-default-limit-edit-actions">
+                <button
+                  type="button"
+                  id="btn-settings-default-limit-save"
+                  class="btn-icon btn-icon-muted settings-default-limit-action-btn settings-default-limit-save-btn"
+                  aria-label="Lưu hạn mức mặc định"
+                >
+                  <svg class="icon-svg" width="20" height="20" aria-hidden="true"><use href="#icon-check" /></svg>
+                </button>
+                <button
+                  type="button"
+                  id="btn-settings-default-limit-cancel"
+                  class="btn-icon btn-icon-muted settings-default-limit-action-btn settings-default-limit-cancel-btn"
+                  aria-label="Hủy sửa hạn mức mặc định"
+                >
+                  <svg class="icon-svg" width="20" height="20" aria-hidden="true"><use href="#icon-close" /></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <p id="settings-default-limit-edit-hint" class="field-hint limit-edit-hint settings-default-limit-edit-hint" hidden>
+            Nghìn đồng (×1.000). Ví dụ <strong>25000</strong> = 25 triệu; có thể dán 25.000.000. Để <strong>0</strong> nếu chưa đặt mặc định.
+          </p>
         </div>
-      </label>
+      </div>
     </section>
 
     <section class="card" aria-labelledby="settings-theme-heading">
@@ -582,8 +607,8 @@
         <div id="edit-jar-categories" class="jar-category-checkboxes" role="group" aria-label="Chọn danh mục cho hũ"></div>
       </div>
       <div class="modal-actions">
-        <button type="button" id="edit-jar-cancel" class="btn btn-ghost btn-block">Hủy</button>
         <button type="button" id="edit-jar-save" class="btn btn-primary btn-block">Lưu</button>
+        <button type="button" id="edit-jar-cancel" class="btn btn-ghost btn-block">Hủy</button>
       </div>
       <div class="modal-secondary-actions">
         <button type="button" id="edit-jar-delete" class="btn btn-ghost btn-block edit-jar-delete-btn">

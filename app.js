@@ -1444,9 +1444,6 @@
   var elExpenseDayPickerDone = document.getElementById("expense-day-picker-done");
   var elReportModeJars = document.getElementById("report-mode-jars");
   var elReportModeDaily = document.getElementById("report-mode-daily");
-  var elReportJarPieToolbar = document.getElementById("report-jar-pie-toolbar");
-  var elReportJarPieBack = document.getElementById("report-jar-pie-back");
-  var elReportJarPieHint = document.getElementById("report-jar-pie-hint");
   var elReportPieView = document.getElementById("report-pie-view");
   var elReportDailyView = document.getElementById("report-daily-view");
   var elReportDailyRangeMonth = document.getElementById("report-daily-range-month");
@@ -1494,6 +1491,14 @@
   var elBtnCloseSettings = document.getElementById("btn-close-settings");
   var elSettingsDefaultLimit = document.getElementById("settings-default-limit");
   var elSettingsDefaultLimitPreview = document.getElementById("settings-default-limit-preview");
+  var elSettingsDefaultLimitView = document.getElementById("settings-default-limit-view");
+  var elSettingsDefaultLimitDisplay = document.getElementById("settings-default-limit-display");
+  var elSettingsDefaultLimitEditRow = document.getElementById("settings-default-limit-edit-row");
+  var elSettingsDefaultLimitEditHint = document.getElementById("settings-default-limit-edit-hint");
+  var elBtnSettingsDefaultLimitEdit = document.getElementById("btn-settings-default-limit-edit");
+  var elBtnSettingsDefaultLimitSave = document.getElementById("btn-settings-default-limit-save");
+  var elBtnSettingsDefaultLimitCancel = document.getElementById("btn-settings-default-limit-cancel");
+  var settingsDefaultLimitBeforeEdit = 0;
   var elSettingsThemeSelect = document.getElementById("settings-theme-select");
   var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
   var elSettingsAddFixedPanel = document.getElementById("settings-add-fixed-panel");
@@ -1521,8 +1526,7 @@
   var elEditCategoryCancel = document.getElementById("edit-category-cancel");
   var elEditCategoryDelete = document.getElementById("edit-category-delete");
 
-  var elMonthJarsCard = document.getElementById("month-jars-card");
-  var elMonthJarsList = document.getElementById("month-jars-list");
+  var elPieSvg = document.getElementById("expense-pie-svg");
   var elSettingsJarsList = document.getElementById("settings-jars-list");
   var elSettingsAddJarForm = document.getElementById("settings-add-jar-form");
   var elSettingsNewJarLabel = document.getElementById("settings-new-jar-label");
@@ -1584,8 +1588,8 @@
   var reportDailyNeedsAutoScroll = true;
   /** Ngày đang chọn trên biểu đồ theo ngày (YYYY-MM-DD), null = không chọn. */
   var reportDailySelectedDayKey = null;
-  /** Khi báo cáo ở chế độ Hũ: null = pie tất cả hũ; id hũ hoặc CONSOLIDATED_JAR_ID = pie danh mục trong hũ */
-  var reportJarDrillId = null;
+  /** Hũ đang mở rộng trong danh sách báo cáo (id hũ hoặc CONSOLIDATED_JAR_ID). */
+  var reportJarExpandedIds = {};
 
   var JAR_COLOR_PRESETS = [
     "#e8a598",
@@ -2095,23 +2099,35 @@
     }
   }
 
-  function renderMonthSpendingJars() {
-    if (!elMonthJarsCard || !elMonthJarsList) return;
+  function renderReportJarsProgress() {
+    if (!elPieLegend) return;
     ensureSpendingJarsNormalized();
     var jars = app.spendingJars || [];
     var unclaimedIds = getUnclaimedCategoryIds();
-    var showCard = jars.length > 0 || unclaimedIds.length > 0;
-    if (!showCard) {
-      elMonthJarsCard.hidden = true;
-      return;
-    }
-    elMonthJarsCard.hidden = false;
-    elMonthJarsList.innerHTML = "";
-    if (!state) return;
+    var hasJars = jars.length > 0 || unclaimedIds.length > 0;
+    var showProgress = hasJars && reportMode === "jars" && !!state;
+    elPieLegend.innerHTML = "";
+    if (!showProgress) return;
 
-    function appendMonthJarRow(label, color, limitAmount, spent, categoryIds, rowClass) {
+    var byCat = totalsByCategory();
+
+    function appendReportJarItem(jarKey, label, color, limitAmount, spent, categoryIds, extraClass) {
       var li = document.createElement("li");
-      li.className = "month-jar-row" + (rowClass ? " " + rowClass : "");
+      li.className = "report-jar-item" + (extraClass ? " " + extraClass : "");
+
+      var details = document.createElement("details");
+      details.className = "report-jar-details";
+      if (reportJarExpandedIds[jarKey]) details.open = true;
+      details.addEventListener("toggle", function () {
+        if (details.open) reportJarExpandedIds[jarKey] = true;
+        else delete reportJarExpandedIds[jarKey];
+      });
+
+      var summary = document.createElement("summary");
+      summary.className = "report-jar-summary";
+
+      var summaryMain = document.createElement("div");
+      summaryMain.className = "report-jar-summary-main";
 
       var pic = document.createElement("div");
       pic.className = "month-jar-pig-wrap";
@@ -2129,6 +2145,7 @@
       if (limitAmount > 0) {
         amt.textContent =
           formatMoneyVNDShort(spent) + " / " + formatMoneyVNDShort(limitAmount);
+        if (spent > limitAmount) amt.classList.add("is-over");
       } else {
         amt.textContent = formatMoneyVNDShort(spent);
       }
@@ -2144,50 +2161,195 @@
       if (limitAmount > 0) {
         var pct = Math.min(100, Math.round((spent / limitAmount) * 100));
         fill.style.width = pct + "%";
-        if (spent > limitAmount) fill.classList.add("is-over");
+        if (spent > limitAmount) {
+          fill.classList.add("is-over");
+        } else {
+          fill.style.background = color;
+        }
       } else {
         fill.style.width = spent > 0 ? "100%" : "0%";
         fill.classList.add("is-neutral");
+        if (spent > 0) fill.style.background = color;
       }
       bar.appendChild(fill);
       barWrap.appendChild(bar);
 
-      var cats = document.createElement("p");
-      cats.className = "month-jar-cats";
-      if (!categoryIds.length) {
-        cats.textContent = "Chưa gắn danh mục";
-      } else {
-        cats.textContent = categoryIds
-          .map(function (id) {
-            return getCategoryLabel(id);
-          })
-          .join(" · ");
-      }
-
       body.appendChild(h);
       body.appendChild(barWrap);
-      body.appendChild(cats);
-      li.appendChild(pic);
-      li.appendChild(body);
-      elMonthJarsList.appendChild(li);
+      summaryMain.appendChild(pic);
+      summaryMain.appendChild(body);
+      summary.appendChild(summaryMain);
+
+      var panel = document.createElement("div");
+      panel.className = "report-jar-children";
+      var childList = document.createElement("ul");
+      childList.className = "report-jar-cat-list";
+
+      if (!categoryIds.length) {
+        var emptyLi = document.createElement("li");
+        emptyLi.className = "report-jar-cat-empty";
+        emptyLi.textContent = "Chưa gắn danh mục";
+        childList.appendChild(emptyLi);
+      } else {
+        var catRows = categoryIds.map(function (cid) {
+          return {
+            id: cid,
+            label: getCategoryLabel(cid),
+            sym: getCategoryIconSym(cid),
+            amount: byCat[cid] || 0,
+          };
+        });
+        catRows.sort(function (a, b) {
+          return b.amount - a.amount || a.label.localeCompare(b.label, "vi");
+        });
+        var hasSpending = false;
+        catRows.forEach(function (row) {
+          if (row.amount > 0) hasSpending = true;
+          var catLi = document.createElement("li");
+          catLi.className =
+            "report-jar-cat-row" + (row.amount <= 0 ? " is-zero" : "");
+          var left = document.createElement("span");
+          left.className = "report-jar-cat-left";
+          var sym = document.createElement("span");
+          sym.className = "report-jar-cat-sym";
+          sym.textContent = row.sym;
+          sym.setAttribute("aria-hidden", "true");
+          var lab = document.createElement("span");
+          lab.className = "report-jar-cat-label";
+          lab.textContent = row.label;
+          left.appendChild(sym);
+          left.appendChild(lab);
+          var right = document.createElement("span");
+          right.className = "report-jar-cat-amt";
+          if (row.amount > 0) {
+            var pctJar =
+              spent > 0 ? Math.round((row.amount / spent) * 100) : 0;
+            right.textContent =
+              formatMoneyVNDShort(row.amount) +
+              (pctJar > 0 ? " · " + pctJar + "%" : "");
+          } else {
+            right.textContent = "—";
+          }
+          catLi.appendChild(left);
+          catLi.appendChild(right);
+          childList.appendChild(catLi);
+        });
+        if (!hasSpending) {
+          var noneLi = document.createElement("li");
+          noneLi.className = "report-jar-cat-empty";
+          noneLi.textContent = "Chưa có chi trong các danh mục này";
+          childList.insertBefore(noneLi, childList.firstChild);
+        }
+      }
+
+      panel.appendChild(childList);
+      details.appendChild(summary);
+      details.appendChild(panel);
+      li.appendChild(details);
+      elPieLegend.appendChild(li);
     }
 
-    jars.forEach(function (j) {
-      var spent = computeJarSpentForMonth(state, j);
-      appendMonthJarRow(j.label, j.color, j.limitAmount, spent, j.categoryIds || [], "");
+    var jarRows = jars.map(function (j) {
+      return {
+        key: j.id,
+        label: j.label,
+        color: j.color,
+        limitAmount: j.limitAmount,
+        spent: computeJarSpentForMonth(state, j),
+        categoryIds: j.categoryIds || [],
+        extraClass: "",
+      };
     });
-
     if (unclaimedIds.length > 0) {
-      var cSpent = computeSpentForCategories(state, unclaimedIds);
-      appendMonthJarRow(
-        CONSOLIDATED_JAR_LABEL,
-        CONSOLIDATED_JAR_COLOR,
-        0,
-        cSpent,
-        unclaimedIds,
-        "month-jar-row-consolidated"
-      );
+      jarRows.push({
+        key: CONSOLIDATED_JAR_ID,
+        label: CONSOLIDATED_JAR_LABEL,
+        color: CONSOLIDATED_JAR_COLOR,
+        limitAmount: 0,
+        spent: computeSpentForCategories(state, unclaimedIds),
+        categoryIds: unclaimedIds,
+        extraClass: "report-jar-item-consolidated",
+      });
     }
+    jarRows.sort(function (a, b) {
+      if (a.key === CONSOLIDATED_JAR_ID) return 1;
+      if (b.key === CONSOLIDATED_JAR_ID) return -1;
+      return b.spent - a.spent || a.label.localeCompare(b.label, "vi");
+    });
+    jarRows.forEach(function (row) {
+      appendReportJarItem(
+        row.key,
+        row.label,
+        row.color,
+        row.limitAmount,
+        row.spent,
+        row.categoryIds,
+        row.extraClass
+      );
+    });
+  }
+
+  function refreshSettingsDefaultLimitDisplay() {
+    if (!elSettingsDefaultLimitDisplay) return;
+    var v = getDefaultMonthlyLimit();
+    var unset = !v || v <= 0;
+    elSettingsDefaultLimitDisplay.textContent = unset
+      ? "Chưa đặt mặc định"
+      : formatMoneyVNDShort(v);
+    elSettingsDefaultLimitDisplay.title = unset ? "" : formatMoneyVND(v);
+    elSettingsDefaultLimitDisplay.classList.toggle("is-unset", unset);
+  }
+
+  function isSettingsDefaultLimitEditOpen() {
+    return elSettingsDefaultLimitEditRow && !elSettingsDefaultLimitEditRow.hidden;
+  }
+
+  function closeSettingsDefaultLimitEdit() {
+    if (!elSettingsDefaultLimitEditRow || !elSettingsDefaultLimitView) return;
+    elSettingsDefaultLimitEditRow.hidden = true;
+    elSettingsDefaultLimitView.hidden = false;
+    if (elSettingsDefaultLimitEditHint) elSettingsDefaultLimitEditHint.hidden = true;
+    if (elBtnSettingsDefaultLimitEdit) {
+      elBtnSettingsDefaultLimitEdit.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function cancelSettingsDefaultLimitEdit() {
+    if (!isSettingsDefaultLimitEditOpen()) return;
+    closeSettingsDefaultLimitEdit();
+    refreshSettingsDefaultLimitDisplay();
+  }
+
+  function openSettingsDefaultLimitEdit() {
+    if (!elSettingsDefaultLimitEditRow || !elSettingsDefaultLimitView) return;
+    if (isSettingsDefaultLimitEditOpen()) return;
+    settingsDefaultLimitBeforeEdit = getDefaultMonthlyLimit();
+    if (elSettingsDefaultLimit) {
+      elSettingsDefaultLimit.value = formatAsNganDisplay(settingsDefaultLimitBeforeEdit);
+      updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+    }
+    elSettingsDefaultLimitView.hidden = true;
+    elSettingsDefaultLimitEditRow.hidden = false;
+    if (elSettingsDefaultLimitEditHint) elSettingsDefaultLimitEditHint.hidden = false;
+    if (elBtnSettingsDefaultLimitEdit) {
+      elBtnSettingsDefaultLimitEdit.setAttribute("aria-expanded", "true");
+    }
+    setTimeout(function () {
+      if (elSettingsDefaultLimit) {
+        elSettingsDefaultLimit.focus();
+        elSettingsDefaultLimit.select();
+      }
+    }, 0);
+  }
+
+  function saveSettingsDefaultLimitEdit() {
+    if (!elSettingsDefaultLimit || !isSettingsDefaultLimitEditOpen()) return;
+    app.settings.defaultLimit = parseMoneyToVND(elSettingsDefaultLimit.value);
+    elSettingsDefaultLimit.value = formatAsNganDisplay(app.settings.defaultLimit);
+    updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+    saveAppData();
+    refreshSettingsDefaultLimitDisplay();
+    closeSettingsDefaultLimitEdit();
   }
 
   function openEditJarDialog(jarId) {
@@ -2667,7 +2829,7 @@
    * segments: { id, label, amount, fill? }[]
    * onSegmentClick: null hoặc function (seg) — dùng cho pie hũ (mở chi tiết)
    */
-  function renderPieChartFromSegments(segments, accessibleTitle, onSegmentClick) {
+  function renderPieChartFromSegments(segments, accessibleTitle, onSegmentClick, skipLegend) {
     if (!elPieBody || !elPieSlices || !elPieLegend) return;
 
     function clearDonutLayers() {
@@ -2790,40 +2952,42 @@
       elPieCenter.appendChild(tot);
     }
 
-    elPieLegend.innerHTML = "";
-    segments.forEach(function (seg, i) {
-      var pct = total > 0 ? Math.round((seg.amount / total) * 1000) / 10 : 0;
-      var li = document.createElement("li");
-      li.className =
-        "pie-legend-item" +
-        (onSegmentClick ? " pie-legend-item-interactive" : "");
-      var dot = document.createElement("span");
-      dot.className = "pie-legend-dot";
-      dot.style.background = sliceFillAt(i, seg);
-      dot.setAttribute("aria-hidden", "true");
-      var text = document.createElement("span");
-      text.className = "pie-legend-text";
-      text.innerHTML =
-        '<span class="pie-legend-label"></span><span class="pie-legend-meta"></span>';
-      text.querySelector(".pie-legend-label").textContent = seg.label;
-      text.querySelector(".pie-legend-meta").textContent =
-        formatMoneyVND(seg.amount) + " · " + pct + "%";
-      li.appendChild(dot);
-      li.appendChild(text);
-      if (onSegmentClick) {
-        li.setAttribute("tabindex", "0");
-        li.addEventListener("click", function () {
-          onSegmentClick(seg);
-        });
-        li.addEventListener("keydown", function (ev) {
-          if (ev.key === "Enter" || ev.key === " ") {
-            ev.preventDefault();
+    if (!skipLegend) {
+      elPieLegend.innerHTML = "";
+      segments.forEach(function (seg, i) {
+        var pct = total > 0 ? Math.round((seg.amount / total) * 1000) / 10 : 0;
+        var li = document.createElement("li");
+        li.className =
+          "pie-legend-item" +
+          (onSegmentClick ? " pie-legend-item-interactive" : "");
+        var dot = document.createElement("span");
+        dot.className = "pie-legend-dot";
+        dot.style.background = sliceFillAt(i, seg);
+        dot.setAttribute("aria-hidden", "true");
+        var text = document.createElement("span");
+        text.className = "pie-legend-text";
+        text.innerHTML =
+          '<span class="pie-legend-label"></span><span class="pie-legend-meta"></span>';
+        text.querySelector(".pie-legend-label").textContent = seg.label;
+        text.querySelector(".pie-legend-meta").textContent =
+          formatMoneyVND(seg.amount) + " · " + pct + "%";
+        li.appendChild(dot);
+        li.appendChild(text);
+        if (onSegmentClick) {
+          li.setAttribute("tabindex", "0");
+          li.addEventListener("click", function () {
             onSegmentClick(seg);
-          }
-        });
-      }
-      elPieLegend.appendChild(li);
-    });
+          });
+          li.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" || ev.key === " ") {
+              ev.preventDefault();
+              onSegmentClick(seg);
+            }
+          });
+        }
+        elPieLegend.appendChild(li);
+      });
+    }
 
     if (elPieTitle) {
       var parts = segments.map(function (s) {
@@ -2836,71 +3000,12 @@
   function renderJarPieChart() {
     if (!elPieBody || !elPieSlices || !elPieLegend || !state) return;
     ensureSpendingJarsNormalized();
-    var byCat = totalsByCategory();
-
-    function openJarDrill(seg) {
-      reportJarDrillId = seg.id;
-      renderReportModeButtons();
-      renderPieChart();
-    }
-
-    if (reportJarDrillId) {
-      if (
-        reportJarDrillId !== CONSOLIDATED_JAR_ID &&
-        !findSpendingJar(reportJarDrillId)
-      ) {
-        reportJarDrillId = null;
-        renderJarPieChart();
-        return;
-      }
-      var categorySegments = [];
-      if (reportJarDrillId === CONSOLIDATED_JAR_ID) {
-        getUnclaimedCategoryIds().forEach(function (cid) {
-          var amt = byCat[cid] || 0;
-          if (amt > 0) {
-            var catRow = findCategory(cid);
-            categorySegments.push({
-              id: cid,
-              label: catRow ? catRow.label : getCategoryLabel(cid),
-              amount: amt,
-            });
-          }
-        });
-      } else {
-        var jar = findSpendingJar(reportJarDrillId);
-        if (!jar) {
-          reportJarDrillId = null;
-          renderJarPieChart();
-          return;
-        }
-        (jar.categoryIds || []).forEach(function (cid) {
-          var amt = byCat[cid] || 0;
-          if (amt > 0) {
-            var catRow = findCategory(cid);
-            categorySegments.push({
-              id: cid,
-              label: catRow ? catRow.label : getCategoryLabel(cid),
-              amount: amt,
-            });
-          }
-        });
-      }
-      var jarTitle =
-        reportJarDrillId === CONSOLIDATED_JAR_ID
-          ? CONSOLIDATED_JAR_LABEL
-          : findSpendingJar(reportJarDrillId)
-          ? findSpendingJar(reportJarDrillId).label
-          : "";
-      renderPieChartFromSegments(
-        categorySegments,
-        "Hũ «" + jarTitle + "» — theo danh mục",
-        null
-      );
-      return;
-    }
+    var jars = app.spendingJars || [];
+    var unclaimed = getUnclaimedCategoryIds();
+    var hasJars = jars.length > 0 || unclaimed.length > 0;
 
     var segments = [];
-    (app.spendingJars || []).forEach(function (j) {
+    jars.forEach(function (j) {
       var spent = computeJarSpentForMonth(state, j);
       if (spent > 0) {
         segments.push({
@@ -2911,7 +3016,6 @@
         });
       }
     });
-    var unclaimed = getUnclaimedCategoryIds();
     if (unclaimed.length) {
       var cSpent = computeSpentForCategories(state, unclaimed);
       if (cSpent > 0) {
@@ -2923,8 +3027,31 @@
         });
       }
     }
+    segments.sort(function (a, b) {
+      if (a.id === CONSOLIDATED_JAR_ID) return 1;
+      if (b.id === CONSOLIDATED_JAR_ID) return -1;
+      return b.amount - a.amount || a.label.localeCompare(b.label, "vi");
+    });
 
-    renderPieChartFromSegments(segments, "Chi tiêu theo hũ", openJarDrill);
+    if (!hasJars) {
+      if (elPieSvg) elPieSvg.hidden = false;
+      renderPieChartFromSegments([], "Chi tiêu theo hũ", null, true);
+      return;
+    }
+
+    if (segments.length > 0) {
+      if (elPieSvg) elPieSvg.hidden = false;
+      renderPieChartFromSegments(segments, "Chi tiêu theo hũ", null, true);
+    } else {
+      elPieEmpty.hidden = true;
+      elPieBody.hidden = false;
+      elPieSlices.innerHTML = "";
+      if (elPieSliceLabels) elPieSliceLabels.innerHTML = "";
+      if (elPieCenter) elPieCenter.innerHTML = "";
+      if (elPieTitle) elPieTitle.textContent = "Chi tiêu theo hũ";
+      if (elPieSvg) elPieSvg.hidden = true;
+    }
+    renderReportJarsProgress();
   }
 
   function renderPieChart() {
@@ -3909,28 +4036,12 @@
     if (elReportDailyView) {
       elReportDailyView.hidden = reportMode !== "daily";
     }
-    if (elReportJarPieToolbar) {
-      elReportJarPieToolbar.hidden = reportMode !== "jars";
-    }
-    if (elReportJarPieBack) {
-      elReportJarPieBack.hidden = reportMode !== "jars" || !reportJarDrillId;
-    }
-    if (elReportJarPieHint) {
-      if (reportMode === "jars" && !reportJarDrillId) {
-        elReportJarPieHint.textContent =
-          "Chọn một phần biểu đồ hoặc mục chú giải để xem chi tiết theo danh mục trong hũ.";
-        elReportJarPieHint.hidden = false;
-      } else {
-        elReportJarPieHint.textContent = "";
-        elReportJarPieHint.hidden = true;
-      }
-    }
     renderReportDailyRangeButtons();
+    renderReportJarsProgress();
   }
 
   function setReportMode(next) {
     if (next !== "jars" && next !== "daily") return;
-    if (next !== "jars") reportJarDrillId = null;
     if (next !== "daily") reportDailySelectedDayKey = null;
     if (next === "daily") reportDailyNeedsAutoScroll = true;
     reportMode = next;
@@ -3968,7 +4079,7 @@
       renderPieChart();
     }
     renderFixedTemplatesList();
-    renderMonthSpendingJars();
+    renderReportJarsProgress();
     if (elSideMenu && !elSideMenu.hidden) {
       renderSideMenuList();
     }
@@ -4403,10 +4514,8 @@
     closeEditFixedTemplateDialog();
     closeEditCategoryDialog();
     closeEditJarDialog();
-    if (elSettingsDefaultLimit) {
-      elSettingsDefaultLimit.value = formatAsNganDisplay(getDefaultMonthlyLimit());
-      updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
-    }
+    closeSettingsDefaultLimitEdit();
+    refreshSettingsDefaultLimitDisplay();
     renderThemeModeOptions();
     renderFixedTemplatesList();
     renderSettingsCategoriesList();
@@ -4422,6 +4531,7 @@
   }
 
   function closeSettings() {
+    cancelSettingsDefaultLimitEdit();
     showMonthView();
     if (activeMonthKey) {
       openMonth(activeMonthKey, { skipUrl: true });
@@ -4441,7 +4551,7 @@
     }
     syncFixedIntoMonth(state, key);
     activeMonthKey = key;
-    reportJarDrillId = null;
+    reportJarExpandedIds = {};
     reportDailyRange = "month";
     reportDailyNeedsAutoScroll = true;
     expenseListFilterDayNum = null;
@@ -4659,15 +4769,6 @@
       renderDailyReportChart();
     });
   }
-  if (elReportJarPieBack) {
-    elReportJarPieBack.addEventListener("click", function () {
-      if (reportMode !== "jars") return;
-      reportJarDrillId = null;
-      renderReportModeButtons();
-      renderPieChart();
-    });
-  }
-
   elBtnOpenMenu.addEventListener("click", openSideMenu);
   elBtnCloseMenu.addEventListener("click", closeSideMenu);
   elSideMenuBackdrop.addEventListener("click", closeSideMenu);
@@ -4675,12 +4776,25 @@
   elBtnOpenSettings.addEventListener("click", openSettings);
   elBtnCloseSettings.addEventListener("click", closeSettings);
 
+  if (elBtnSettingsDefaultLimitEdit) {
+    elBtnSettingsDefaultLimitEdit.addEventListener("click", openSettingsDefaultLimitEdit);
+  }
+  if (elBtnSettingsDefaultLimitSave) {
+    elBtnSettingsDefaultLimitSave.addEventListener("click", saveSettingsDefaultLimitEdit);
+  }
+  if (elBtnSettingsDefaultLimitCancel) {
+    elBtnSettingsDefaultLimitCancel.addEventListener("click", cancelSettingsDefaultLimitEdit);
+  }
   if (elSettingsDefaultLimit) {
-    elSettingsDefaultLimit.addEventListener("blur", function () {
-      app.settings.defaultLimit = parseMoneyToVND(elSettingsDefaultLimit.value);
-      elSettingsDefaultLimit.value = formatAsNganDisplay(app.settings.defaultLimit);
-      updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
-      saveAppData();
+    elSettingsDefaultLimit.addEventListener("keydown", function (ev) {
+      if (!isSettingsDefaultLimitEditOpen()) return;
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveSettingsDefaultLimitEdit();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        cancelSettingsDefaultLimitEdit();
+      }
     });
   }
 
@@ -5068,6 +5182,11 @@
         cancelLimitEdit();
         return;
       }
+      if (isSettingsDefaultLimitEditOpen()) {
+        ev.preventDefault();
+        cancelSettingsDefaultLimitEdit();
+        return;
+      }
       if (elExpenseDayPickerDialog && !elExpenseDayPickerDialog.hidden) {
         ev.preventDefault();
         closeExpenseDayPicker();
@@ -5225,6 +5344,7 @@
   bindAmountPreview(elAmount, elExpensePreview);
   bindAmountPreview(elEditAmount, elEditAmountPreview);
   bindAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
+  refreshSettingsDefaultLimitDisplay();
   bindAmountPreview(elSettingsAddFixedAmount, elSettingsAddFixedAmountPreview);
   bindAmountPreview(elEditFixedAmount, elEditFixedAmountPreview);
   bindAmountPreview(elSettingsNewJarLimit, elSettingsNewJarLimitPreview);
