@@ -2502,6 +2502,7 @@
       o.dateTs = Math.round(row.dateTs);
     }
     if (row.templateId) o.templateId = row.templateId;
+    if (row.monthEdited) o.monthEdited = true;
     if (typeof row.deletedAt === "number" && row.deletedAt > 0) {
       o.deletedAt = Math.round(row.deletedAt);
     }
@@ -3373,7 +3374,7 @@
       empty.className = "fixed-template-row";
       empty.textContent = showEdit
         ? "Chưa có khoản cố định — thêm bên dưới hoặc đánh dấu khi thêm chi ở trang tháng."
-        : "Chưa có khoản cố định — bật “Cố định hàng tháng” khi thêm hoặc vào Cài đặt.";
+        : "Chưa có khoản cố định — bật “Cố định hàng tháng” khi thêm chi.";
       empty.style.color = "var(--muted)";
       empty.style.fontSize = "0.8125rem";
       ul.appendChild(empty);
@@ -3458,7 +3459,9 @@
 
   function renderFixedTemplatesList() {
     renderFixedTemplatesInto(elFixedTemplatesList, false);
-    renderFixedTemplatesInto(elSettingsFixedList, true);
+    if (elSettingsFixedList && !elSettingsFixedList.closest("[hidden]")) {
+      renderFixedTemplatesInto(elSettingsFixedList, true);
+    }
   }
 
   function expenseListFilterResolvedDayKey() {
@@ -3594,8 +3597,21 @@
     var line = document.createElement("span");
     line.className = "expense-row-line";
     var namePart = e.name ? e.name : getCategoryLabel(e.category);
-    line.textContent = namePart;
-    line.title = getCategoryLabel(e.category) + (e.name ? " · " + e.name : "");
+    var nameSpan = document.createElement("span");
+    nameSpan.className = "expense-row-line-name";
+    nameSpan.textContent = namePart;
+    line.appendChild(nameSpan);
+    if (isFixedExpenseNeedsMonthReview(e)) {
+      var reviewMark = document.createElement("span");
+      reviewMark.className = "expense-fixed-review-mark";
+      reviewMark.textContent = "*";
+      reviewMark.setAttribute("aria-label", "Chưa chỉnh cho tháng này");
+      line.appendChild(reviewMark);
+    }
+    line.title =
+      getCategoryLabel(e.category) +
+      (e.name ? " · " + e.name : "") +
+      (isFixedExpenseNeedsMonthReview(e) ? " · Chưa chỉnh cho tháng này" : "");
     wrap.appendChild(line);
     mid.appendChild(wrap);
     var inputDate = formatExpenseInputDate(e);
@@ -3699,6 +3715,10 @@
 
   function isFixedExpenseRow(e) {
     return !!(e && e.templateId);
+  }
+
+  function isFixedExpenseNeedsMonthReview(e) {
+    return isFixedExpenseRow(e) && !e.monthEdited;
   }
 
   function expenseDisplayName(e) {
@@ -4534,7 +4554,10 @@
       updatedAt: nowTs(),
     };
     if (dateTs > 0) row.dateTs = dateTs;
-    if (templateId) row.templateId = templateId;
+    if (templateId) {
+      row.templateId = templateId;
+      row.monthEdited = true;
+    }
     state.expenses.push(row);
     var rowDayKey = dayKeyFromTs(expenseDateTs(row));
     alignExpenseListDayFilterFromDayKey(rowDayKey);
@@ -5025,6 +5048,7 @@
       }
     }
     if (e.templateId) {
+      e.monthEdited = true;
       var t = findFixedTemplate(e.templateId);
       if (t) {
         t.category = cat;

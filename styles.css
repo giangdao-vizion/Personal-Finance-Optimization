@@ -2157,13 +2157,27 @@ select:focus-visible {
 }
 
 .expense-row-line {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 0.12rem;
+  min-width: 0;
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--text);
+}
+
+.expense-row-line-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.expense-fixed-review-mark {
+  flex-shrink: 0;
+  color: var(--danger);
+  font-weight: 700;
+  line-height: 1;
 }
 
 .expense-row-amt {
