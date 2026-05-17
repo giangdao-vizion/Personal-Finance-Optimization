@@ -441,6 +441,12 @@
             <div id="settings-new-category-icons" class="icon-picker"></div>
             <input type="hidden" id="settings-new-category-icon-id" value="food" />
           </div>
+          <label class="field">
+            <span class="field-label">Hũ chi tiêu</span>
+            <div class="select-wrap">
+              <select id="settings-new-category-jar" aria-label="Hũ chi tiêu gắn với danh mục"></select>
+            </div>
+          </label>
           <div class="settings-add-category-form-actions">
             <button type="submit" class="btn btn-primary btn-block">Thêm danh mục</button>
             <button type="button" id="btn-settings-cancel-add-category" class="btn btn-ghost btn-block">Hủy</button>
@@ -452,7 +458,7 @@
     <section class="card" aria-labelledby="settings-jars-heading">
       <h2 id="settings-jars-heading" class="card-title">Quản lý Hũ chi tiêu</h2>
       <p class="field-hint settings-hint">
-        Tạo các hũ với hạn mức riêng và gắn danh mục. Mỗi danh mục chỉ thuộc một hũ tại một thời điểm. Khoản chi bạn nhập như bình thường sẽ tự cộng vào hũ có danh mục tương ứng. Danh mục chưa gắn hũ nào được gom vào hũ &quot;Tổng hợp&quot; trên màn hình tháng (chỉ hiển thị, không cần tạo thủ công).
+        Tạo các hũ với hạn mức riêng và gắn danh mục. Mỗi danh mục chỉ thuộc một hũ tại một thời điểm. Khoản chi bạn nhập như bình thường sẽ tự cộng vào hũ có danh mục tương ứng. Danh mục chưa gắn hũ nào được gom vào hũ &quot;Khác&quot; trên màn hình tháng (chỉ hiển thị, không cần tạo thủ công).
       </p>
       <ul id="settings-jars-list" class="settings-jars-list"></ul>
       <button type="button" id="btn-settings-show-add-jar" class="btn btn-primary btn-block settings-show-add-jar-btn">
@@ -636,6 +642,12 @@
         <div id="edit-category-icons" class="icon-picker"></div>
         <input type="hidden" id="edit-category-icon-id" value="food" />
       </div>
+      <label class="field">
+        <span class="field-label">Hũ chi tiêu</span>
+        <div class="select-wrap">
+          <select id="edit-category-jar" aria-label="Hũ chi tiêu gắn với danh mục"></select>
+        </div>
+      </label>
       <div class="modal-actions">
         <button type="button" id="edit-category-cancel" class="btn btn-ghost btn-block">Hủy</button>
         <button type="button" id="edit-category-save" class="btn btn-primary btn-block">Lưu</button>

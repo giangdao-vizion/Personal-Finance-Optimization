@@ -64,7 +64,7 @@
 
   /** Hũ ảo trên màn tháng: danh mục chưa gắn hũ nào */
   var CONSOLIDATED_JAR_ID = "__consolidated";
-  var CONSOLIDATED_JAR_LABEL = "Tổng hợp";
+  var CONSOLIDATED_JAR_LABEL = "Khác";
   var CONSOLIDATED_JAR_COLOR = "#7d8fa3";
 
   /** Nhãn cho id danh mục cũ (trước khi có danh mục tùy chỉnh) — dùng khi gộp dữ liệu cũ */
@@ -1194,6 +1194,67 @@
     });
   }
 
+  function findJarIdForCategory(catId) {
+    if (!catId || !Array.isArray(app.spendingJars)) return "";
+    var i;
+    for (i = 0; i < app.spendingJars.length; i++) {
+      var j = app.spendingJars[i];
+      if ((j.categoryIds || []).indexOf(catId) >= 0) return j.id;
+    }
+    return "";
+  }
+
+  function setCategoryJarAssignment(catId, jarId) {
+    if (!catId || !categoryIdExists(catId)) return;
+    ensureSpendingJarsNormalized();
+    if (jarId && findSpendingJar(jarId)) {
+      reserveCategoriesForJar(jarId, [catId]);
+      var jar = findSpendingJar(jarId);
+      var ids = (jar.categoryIds || []).slice();
+      if (ids.indexOf(catId) < 0) {
+        ids.push(catId);
+        jar.categoryIds = ids;
+        jar.updatedAt = nowTs();
+      }
+    } else {
+      app.spendingJars.forEach(function (j) {
+        var prev = j.categoryIds || [];
+        var next = prev.filter(function (id) {
+          return id !== catId;
+        });
+        if (next.length !== prev.length) {
+          j.categoryIds = next;
+          j.updatedAt = nowTs();
+        }
+      });
+    }
+    dedupeJarCategoriesExclusive();
+  }
+
+  function fillCategoryJarSelect(selectEl, selectedJarId) {
+    if (!selectEl) return;
+    ensureSpendingJarsNormalized();
+    selectEl.innerHTML = "";
+    var optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "Chưa gắn hũ (Khác)";
+    selectEl.appendChild(optNone);
+    (app.spendingJars || []).forEach(function (j) {
+      var opt = document.createElement("option");
+      opt.value = j.id;
+      opt.textContent = j.label;
+      selectEl.appendChild(opt);
+    });
+    var sel = selectedJarId && findSpendingJar(selectedJarId) ? selectedJarId : "";
+    selectEl.value = sel;
+  }
+
+  function readCategoryJarSelectValue(selectEl) {
+    if (!selectEl) return "";
+    var v = selectEl.value || "";
+    return findSpendingJar(v) ? v : "";
+  }
+
   function findSpendingJar(jarId) {
     if (!jarId || !Array.isArray(app.spendingJars)) return null;
     var i;
@@ -1518,11 +1579,13 @@
   var elSettingsNewCategoryLabel = document.getElementById("settings-new-category-label");
   var elSettingsNewCategoryIcons = document.getElementById("settings-new-category-icons");
   var elSettingsNewCategoryIconId = document.getElementById("settings-new-category-icon-id");
+  var elSettingsNewCategoryJar = document.getElementById("settings-new-category-jar");
   var elEditCategoryDialog = document.getElementById("edit-category-dialog");
   var elEditCategoryBackdrop = document.getElementById("edit-category-backdrop");
   var elEditCategoryLabelInput = document.getElementById("edit-category-label-input");
   var elEditCategoryIcons = document.getElementById("edit-category-icons");
   var elEditCategoryIconId = document.getElementById("edit-category-icon-id");
+  var elEditCategoryJar = document.getElementById("edit-category-jar");
   var elEditCategorySave = document.getElementById("edit-category-save");
   var elEditCategoryCancel = document.getElementById("edit-category-cancel");
   var elEditCategoryDelete = document.getElementById("edit-category-delete");
@@ -2065,6 +2128,7 @@
     if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.value = "";
     if (elSettingsNewCategoryIconId) elSettingsNewCategoryIconId.value = "food";
     renderSettingsNewCategoryIconPicker();
+    fillCategoryJarSelect(elSettingsNewCategoryJar, "");
   }
 
   function setSettingsAddCategoryPanelOpen(open) {
@@ -2074,7 +2138,11 @@
       else elSettingsAddCategoryPanel.setAttribute("aria-hidden", "true");
     }
     if (elBtnSettingsShowAddCategory) elBtnSettingsShowAddCategory.hidden = !!open;
-    if (!open) resetSettingsAddCategoryForm();
+    if (open) {
+      fillCategoryJarSelect(elSettingsNewCategoryJar, "");
+    } else {
+      resetSettingsAddCategoryForm();
+    }
   }
 
   function resetSettingsAddFixedForm() {
@@ -2580,6 +2648,7 @@
     editingCategoryId = catId;
     if (elEditCategoryLabelInput) elEditCategoryLabelInput.value = c.label;
     renderIconPicker(elEditCategoryIcons, elEditCategoryIconId, c.iconId);
+    fillCategoryJarSelect(elEditCategoryJar, findJarIdForCategory(catId));
     elEditCategoryDialog.hidden = false;
     elEditCategoryDialog.setAttribute("aria-hidden", "false");
     updateModalOpenBodyLock();
@@ -2612,9 +2681,12 @@
       }
     }
     if (!ok) c.iconId = "pin";
+    setCategoryJarAssignment(editingCategoryId, readCategoryJarSelectValue(elEditCategoryJar));
     saveAppData();
     closeEditCategoryDialog();
     renderSettingsCategoriesList();
+    renderSettingsJarsList();
+    renderNewJarCategoryCheckboxes();
     refreshAllCategorySelects();
     if (activeMonthKey && state) persistAndRender();
   }
@@ -4822,11 +4894,12 @@
       }
       if (lab.length > 40) lab = lab.slice(0, 40);
       var iconId = elSettingsNewCategoryIconId ? elSettingsNewCategoryIconId.value : "food";
-      app.categories.push(
-        normalizeCategoryRow({ id: catUid(), label: lab, iconId: iconId })
-      );
+      var newCat = normalizeCategoryRow({ id: catUid(), label: lab, iconId: iconId });
+      app.categories.push(newCat);
+      setCategoryJarAssignment(newCat.id, readCategoryJarSelectValue(elSettingsNewCategoryJar));
       saveAppData();
       renderSettingsCategoriesList();
+      renderSettingsJarsList();
       renderNewJarCategoryCheckboxes();
       refreshAllCategorySelects();
       if (activeMonthKey && state) persistAndRender();
@@ -5143,8 +5216,6 @@
       }
     }
     e.updatedAt = nowTs();
-    var savedDayKey = dayKeyFromTs(expenseDateTs(e));
-    alignExpenseListDayFilterFromDayKey(savedDayKey);
     if (elEditExpenseFixed && elEditExpenseFixed.checked && !e.templateId) {
       var isPastMonth =
         !!activeMonthKey &&
