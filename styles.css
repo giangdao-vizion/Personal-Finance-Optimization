@@ -2651,43 +2651,43 @@ select:focus-visible {
 }
 
 .expense-datetime-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.45rem;
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
   width: 100%;
   min-width: 0;
   max-width: 100%;
 }
 
-.expense-datetime-row input[type="date"],
-.expense-datetime-row input[type="time"] {
-  display: block;
+.expense-datetime-row .expense-date-input,
+.expense-datetime-row input[type="date"] {
+  flex: 1 1 auto;
   min-width: 0;
-  width: 100%;
+  width: auto;
   max-width: 100%;
   box-sizing: border-box;
-  min-height: 42px;
-  padding: 0.5rem 0.55rem;
-  font-size: 0.9375rem;
+  min-height: 36px;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.8125rem;
 }
 
-.expense-datetime-row input[type="date"] {
-  padding-right: 0.4rem;
+.expense-datetime-row .expense-time-input {
+  flex: 0 0 4.65rem;
+  width: 4.65rem;
+  max-width: 4.65rem;
+  min-width: 4.65rem;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 0.3rem 0.2rem;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  letter-spacing: 0.02em;
 }
 
-.expense-datetime-row input[type="time"] {
-  padding-right: 0.4rem;
-}
-
-@media (min-width: 400px) {
-  .expense-form .expense-datetime-row {
-    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-    gap: 0.4rem;
-  }
-}
-
-#edit-expense-dialog .expense-datetime-row {
-  grid-template-columns: minmax(0, 1fr);
+.expense-datetime-row .expense-time-input::placeholder {
+  font-size: 0.75rem;
+  letter-spacing: 0;
 }
 
 /* Tooltip "Cố định" trong modal sửa khoản chi: bung sang phải icon */

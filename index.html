@@ -222,8 +222,18 @@
           <label class="field expense-datetime-field">
             <span class="field-label">Ngày giờ chi</span>
             <div class="expense-datetime-row">
-              <input type="date" id="expense-date" aria-label="Ngày chi" />
-              <input type="time" id="expense-time" step="60" aria-label="Giờ chi" />
+              <input type="date" id="expense-date" class="expense-date-input" aria-label="Ngày chi" />
+              <input
+                type="text"
+                id="expense-time"
+                class="expense-time-input"
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="HH:MM"
+                maxlength="5"
+                spellcheck="false"
+                aria-label="Giờ chi (24h)"
+              />
             </div>
           </label>
         </details>
@@ -737,8 +747,18 @@
       <label class="field expense-datetime-field">
         <span class="field-label">Ngày giờ chi</span>
         <div class="expense-datetime-row">
-          <input type="date" id="edit-expense-date" aria-label="Ngày chi" />
-          <input type="time" id="edit-expense-time" step="60" aria-label="Giờ chi" />
+          <input type="date" id="edit-expense-date" class="expense-date-input" aria-label="Ngày chi" />
+          <input
+            type="text"
+            id="edit-expense-time"
+            class="expense-time-input"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="HH:MM"
+            maxlength="5"
+            spellcheck="false"
+            aria-label="Giờ chi (24h)"
+          />
         </div>
       </label>
       <div class="field field-checkbox-expense field-checkbox-inline">
