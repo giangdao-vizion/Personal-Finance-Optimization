@@ -443,9 +443,13 @@
           </div>
           <label class="field">
             <span class="field-label">Hũ chi tiêu</span>
-            <div class="select-wrap">
-              <select id="settings-new-category-jar" aria-label="Hũ chi tiêu gắn với danh mục"></select>
-            </div>
+            <input type="hidden" id="settings-new-category-jar" value="" />
+            <div
+              id="settings-new-category-jar-picker"
+              class="category-jar-picker"
+              role="radiogroup"
+              aria-label="Hũ chi tiêu gắn với danh mục"
+            ></div>
           </label>
           <div class="settings-add-category-form-actions">
             <button type="submit" class="btn btn-primary btn-block">Thêm danh mục</button>
@@ -644,9 +648,13 @@
       </div>
       <label class="field">
         <span class="field-label">Hũ chi tiêu</span>
-        <div class="select-wrap">
-          <select id="edit-category-jar" aria-label="Hũ chi tiêu gắn với danh mục"></select>
-        </div>
+        <input type="hidden" id="edit-category-jar" value="" />
+        <div
+          id="edit-category-jar-picker"
+          class="category-jar-picker"
+          role="radiogroup"
+          aria-label="Hũ chi tiêu gắn với danh mục"
+        ></div>
       </label>
       <div class="modal-actions">
         <button type="button" id="edit-category-cancel" class="btn btn-ghost btn-block">Hủy</button>

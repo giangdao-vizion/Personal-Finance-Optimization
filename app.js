@@ -1231,27 +1231,49 @@
     dedupeJarCategoriesExclusive();
   }
 
-  function fillCategoryJarSelect(selectEl, selectedJarId) {
-    if (!selectEl) return;
+  function renderCategoryJarPicker(pickerEl, hiddenInputEl, selectedJarId) {
+    if (!pickerEl || !hiddenInputEl) return;
     ensureSpendingJarsNormalized();
-    selectEl.innerHTML = "";
-    var optNone = document.createElement("option");
-    optNone.value = "";
-    optNone.textContent = "Chưa gắn hũ (Khác)";
-    selectEl.appendChild(optNone);
-    (app.spendingJars || []).forEach(function (j) {
-      var opt = document.createElement("option");
-      opt.value = j.id;
-      opt.textContent = j.label;
-      selectEl.appendChild(opt);
-    });
     var sel = selectedJarId && findSpendingJar(selectedJarId) ? selectedJarId : "";
-    selectEl.value = sel;
+    hiddenInputEl.value = sel;
+    pickerEl.innerHTML = "";
+
+    function appendJarOption(jarId, label, color, isOther) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "category-jar-picker-btn" + (jarId === sel ? " is-selected" : "");
+      btn.setAttribute("role", "radio");
+      btn.setAttribute("aria-checked", jarId === sel ? "true" : "false");
+      btn.dataset.jarId = jarId;
+
+      var pigWrap = document.createElement("span");
+      pigWrap.className =
+        "category-jar-picker-pig" + (isOther ? " is-other" : "");
+      pigWrap.appendChild(piggyBankUseSvg(color || CONSOLIDATED_JAR_COLOR, 32));
+
+      var text = document.createElement("span");
+      text.className = "category-jar-picker-label";
+      text.textContent = label;
+
+      btn.appendChild(pigWrap);
+      btn.appendChild(text);
+      btn.addEventListener("click", function () {
+        hiddenInputEl.value = jarId;
+        renderCategoryJarPicker(pickerEl, hiddenInputEl, jarId);
+      });
+      pickerEl.appendChild(btn);
+    }
+
+    appendJarOption("", "Chưa gắn hũ (Khác)", CONSOLIDATED_JAR_COLOR, true);
+    (app.spendingJars || []).forEach(function (j) {
+      appendJarOption(j.id, j.label, j.color, false);
+    });
   }
 
-  function readCategoryJarSelectValue(selectEl) {
-    if (!selectEl) return "";
-    var v = selectEl.value || "";
+  function readCategoryJarSelectValue(hiddenInputEl) {
+    if (!hiddenInputEl) return "";
+    var v = hiddenInputEl.value || "";
     return findSpendingJar(v) ? v : "";
   }
 
@@ -1580,12 +1602,16 @@
   var elSettingsNewCategoryIcons = document.getElementById("settings-new-category-icons");
   var elSettingsNewCategoryIconId = document.getElementById("settings-new-category-icon-id");
   var elSettingsNewCategoryJar = document.getElementById("settings-new-category-jar");
+  var elSettingsNewCategoryJarPicker = document.getElementById(
+    "settings-new-category-jar-picker"
+  );
   var elEditCategoryDialog = document.getElementById("edit-category-dialog");
   var elEditCategoryBackdrop = document.getElementById("edit-category-backdrop");
   var elEditCategoryLabelInput = document.getElementById("edit-category-label-input");
   var elEditCategoryIcons = document.getElementById("edit-category-icons");
   var elEditCategoryIconId = document.getElementById("edit-category-icon-id");
   var elEditCategoryJar = document.getElementById("edit-category-jar");
+  var elEditCategoryJarPicker = document.getElementById("edit-category-jar-picker");
   var elEditCategorySave = document.getElementById("edit-category-save");
   var elEditCategoryCancel = document.getElementById("edit-category-cancel");
   var elEditCategoryDelete = document.getElementById("edit-category-delete");
@@ -2128,7 +2154,11 @@
     if (elSettingsNewCategoryLabel) elSettingsNewCategoryLabel.value = "";
     if (elSettingsNewCategoryIconId) elSettingsNewCategoryIconId.value = "food";
     renderSettingsNewCategoryIconPicker();
-    fillCategoryJarSelect(elSettingsNewCategoryJar, "");
+    renderCategoryJarPicker(
+      elSettingsNewCategoryJarPicker,
+      elSettingsNewCategoryJar,
+      ""
+    );
   }
 
   function setSettingsAddCategoryPanelOpen(open) {
@@ -2139,7 +2169,11 @@
     }
     if (elBtnSettingsShowAddCategory) elBtnSettingsShowAddCategory.hidden = !!open;
     if (open) {
-      fillCategoryJarSelect(elSettingsNewCategoryJar, "");
+      renderCategoryJarPicker(
+        elSettingsNewCategoryJarPicker,
+        elSettingsNewCategoryJar,
+        ""
+      );
     } else {
       resetSettingsAddCategoryForm();
     }
@@ -2648,7 +2682,11 @@
     editingCategoryId = catId;
     if (elEditCategoryLabelInput) elEditCategoryLabelInput.value = c.label;
     renderIconPicker(elEditCategoryIcons, elEditCategoryIconId, c.iconId);
-    fillCategoryJarSelect(elEditCategoryJar, findJarIdForCategory(catId));
+    renderCategoryJarPicker(
+      elEditCategoryJarPicker,
+      elEditCategoryJar,
+      findJarIdForCategory(catId)
+    );
     elEditCategoryDialog.hidden = false;
     elEditCategoryDialog.setAttribute("aria-hidden", "false");
     updateModalOpenBodyLock();

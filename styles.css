@@ -1098,6 +1098,72 @@ body.settings-pointer-dragging {
   min-width: 12ch;
 }
 
+.category-jar-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.category-jar-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  min-height: var(--tap-min);
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.category-jar-picker-btn:hover {
+  background: var(--surface-press);
+}
+
+.category-jar-picker-btn.is-selected {
+  border-color: rgba(52, 195, 160, 0.45);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px rgba(52, 195, 160, 0.12);
+}
+
+.category-jar-picker-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.category-jar-picker-pig {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+}
+
+.category-jar-picker-pig .jar-pig-svg {
+  display: block;
+}
+
+.category-jar-picker-pig.is-other {
+  opacity: 0.82;
+}
+
+.category-jar-picker-label {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
 .jar-category-checkboxes {
   display: flex;
   flex-direction: column;
@@ -1438,6 +1504,9 @@ details.collapsible-card > .collapsible-summary:focus-visible {
   padding-top: 0.6rem;
   margin-top: 0.5rem;
   border-top: 1px solid var(--border);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 /* —— Tổng quan tháng: một khối, 3 cột ngang; sửa hạn mức → xếp dọc + ô nhập lớn —— */
@@ -1839,6 +1908,18 @@ select:focus {
 .expense-form {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#expense-advanced-section {
+  min-width: 0;
+  width: 100%;
+}
+
+#expense-advanced-section > .expense-datetime-field {
+  margin-bottom: 0;
+  width: 100%;
 }
 
 .expense-form-top-row {
@@ -2558,29 +2639,55 @@ select:focus-visible {
   overflow-x: hidden;
 }
 
+#edit-expense-dialog .modal-panel .field {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .expense-datetime-field {
-  min-width: 0;
-}
-
-.expense-datetime-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
-  gap: 0.5rem;
-  width: 100%;
-  min-width: 0;
-}
-
-.expense-datetime-row input[type="date"],
-.expense-datetime-row input[type="time"] {
   min-width: 0;
   width: 100%;
   max-width: 100%;
 }
 
-@media (max-width: 360px) {
-  .expense-datetime-row {
-    grid-template-columns: 1fr;
+.expense-datetime-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.45rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.expense-datetime-row input[type="date"],
+.expense-datetime-row input[type="time"] {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 0.5rem 0.55rem;
+  font-size: 0.9375rem;
+}
+
+.expense-datetime-row input[type="date"] {
+  padding-right: 0.4rem;
+}
+
+.expense-datetime-row input[type="time"] {
+  padding-right: 0.4rem;
+}
+
+@media (min-width: 400px) {
+  .expense-form .expense-datetime-row {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: 0.4rem;
   }
+}
+
+#edit-expense-dialog .expense-datetime-row {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* Tooltip "Cố định" trong modal sửa khoản chi: bung sang phải icon */
