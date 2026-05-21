@@ -1507,6 +1507,8 @@
   var elBtnLimitCancel = document.getElementById("btn-limit-cancel");
   var elCategory = document.getElementById("expense-category");
   var elName = document.getElementById("expense-name");
+  var elExpenseNameSuggestions = document.getElementById("expense-name-suggestions");
+  var expenseNameSuggestHideTimer = null;
   var elAmount = document.getElementById("expense-amount");
   var elExpensePreview = document.getElementById("expense-amount-preview");
   var elForm = document.getElementById("expense-form");
@@ -4016,6 +4018,92 @@
     return expenseCreatedAt(e);
   }
 
+  var EXPENSE_NAME_SUGGEST_MS = 30 * 24 * 60 * 60 * 1000;
+
+  function getExpenseNameSuggestionsForCategory(categoryId) {
+    if (!categoryId || !categoryIdExists(categoryId)) return [];
+    var cutoff = nowTs() - EXPENSE_NAME_SUGGEST_MS;
+    var counts = {};
+    Object.keys(app.months).forEach(function (monthKey) {
+      var month = app.months[monthKey];
+      if (!month || isMonthDeleted(month) || !Array.isArray(month.expenses)) return;
+      month.expenses.forEach(function (e) {
+        if (isRowDeleted(e)) return;
+        if (e.category !== categoryId) return;
+        if (expenseDateTs(e) < cutoff) return;
+        var name = typeof e.name === "string" ? e.name.trim() : "";
+        if (!name) return;
+        counts[name] = (counts[name] || 0) + 1;
+      });
+    });
+    return Object.keys(counts)
+      .map(function (name) {
+        return { name: name, count: counts[name] };
+      })
+      .sort(function (a, b) {
+        if (b.count !== a.count) return b.count - a.count;
+        return a.name.localeCompare(b.name, "vi");
+      })
+      .map(function (x) {
+        return x.name;
+      });
+  }
+
+  function hideExpenseNameSuggestions() {
+    if (expenseNameSuggestHideTimer) {
+      clearTimeout(expenseNameSuggestHideTimer);
+      expenseNameSuggestHideTimer = null;
+    }
+    if (!elExpenseNameSuggestions) return;
+    elExpenseNameSuggestions.hidden = true;
+    elExpenseNameSuggestions.innerHTML = "";
+    if (elName) elName.setAttribute("aria-expanded", "false");
+  }
+
+  function renderExpenseNameSuggestions() {
+    if (!elExpenseNameSuggestions || !elName) return;
+    var cat = elCategory ? elCategory.value : "";
+    var names = getExpenseNameSuggestionsForCategory(cat);
+    elExpenseNameSuggestions.innerHTML = "";
+    if (!names.length) {
+      hideExpenseNameSuggestions();
+      return;
+    }
+    names.forEach(function (name) {
+      var li = document.createElement("li");
+      li.className = "expense-name-suggestion-item";
+      li.setAttribute("role", "presentation");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "expense-name-suggestion-btn";
+      btn.setAttribute("role", "option");
+      btn.textContent = name;
+      btn.addEventListener("mousedown", function (ev) {
+        ev.preventDefault();
+        elName.value = name;
+        hideExpenseNameSuggestions();
+        elName.focus();
+      });
+      li.appendChild(btn);
+      elExpenseNameSuggestions.appendChild(li);
+    });
+    elExpenseNameSuggestions.hidden = false;
+    elName.setAttribute("aria-expanded", "true");
+  }
+
+  function showExpenseNameSuggestions() {
+    if (expenseNameSuggestHideTimer) {
+      clearTimeout(expenseNameSuggestHideTimer);
+      expenseNameSuggestHideTimer = null;
+    }
+    renderExpenseNameSuggestions();
+  }
+
+  function scheduleHideExpenseNameSuggestions() {
+    if (expenseNameSuggestHideTimer) clearTimeout(expenseNameSuggestHideTimer);
+    expenseNameSuggestHideTimer = setTimeout(hideExpenseNameSuggestions, 140);
+  }
+
   function pad2(n) {
     return String(n).padStart(2, "0");
   }
@@ -4739,6 +4827,18 @@
     if (document.visibilityState === "hidden") flushIncomeFromField();
   });
 
+  if (elName) {
+    elName.addEventListener("focus", showExpenseNameSuggestions);
+    elName.addEventListener("blur", scheduleHideExpenseNameSuggestions);
+  }
+  if (elCategory) {
+    elCategory.addEventListener("change", function () {
+      if (elName && document.activeElement === elName) {
+        renderExpenseNameSuggestions();
+      }
+    });
+  }
+
   elForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
     if (!state) return;
@@ -4785,6 +4885,7 @@
     var rowDayKey = dayKeyFromTs(expenseDateTs(row));
     alignExpenseListDayFilterFromDayKey(rowDayKey);
     elName.value = "";
+    hideExpenseNameSuggestions();
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
     resetAddExpenseDateInput();

@@ -1932,6 +1932,65 @@ select:focus {
   margin-bottom: 0.95rem;
 }
 
+.expense-name-input-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.expense-name-suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.28rem);
+  z-index: 30;
+  list-style: none;
+  margin: 0;
+  padding: 0.28rem 0;
+  max-height: 10.5rem;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-float);
+}
+
+.expense-name-suggestions[hidden] {
+  display: none !important;
+}
+
+.expense-name-suggestion-item {
+  margin: 0;
+  padding: 0;
+}
+
+.expense-name-suggestion-btn {
+  display: block;
+  width: 100%;
+  padding: 0.42rem 0.65rem;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.expense-name-suggestion-btn:hover,
+.expense-name-suggestion-btn:focus-visible {
+  background: var(--surface-press);
+  outline: none;
+}
+
+.expense-name-suggestion-btn:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+}
+
 .expense-form-category-field {
   margin-bottom: 0.95rem;
 }
