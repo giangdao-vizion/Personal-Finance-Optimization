@@ -1696,6 +1696,8 @@
   var reportDailySelectedDayKey = null;
   /** Hũ đang mở rộng trong danh sách báo cáo (id hũ hoặc CONSOLIDATED_JAR_ID). */
   var reportJarExpandedIds = {};
+  /** Danh mục đang mở trong hũ báo cáo: key = jarKey + "\\x1f" + categoryId */
+  var reportJarCatExpandedKeys = {};
 
   var JAR_COLOR_PRESETS = [
     "#e8a598",
@@ -2218,6 +2220,124 @@
     }
   }
 
+  function reportJarCatExpandKey(jarKey, categoryId) {
+    return jarKey + "\x1f" + categoryId;
+  }
+
+  function getMonthExpensesForCategory(categoryId) {
+    if (!state || !Array.isArray(state.expenses) || !categoryId) return [];
+    return state.expenses
+      .filter(function (e) {
+        return !isRowDeleted(e) && e.category === categoryId;
+      })
+      .sort(function (a, b) {
+        var at = expenseDateTs(a);
+        var bt = expenseDateTs(b);
+        if (at !== bt) return bt - at;
+        return String(b.id || "").localeCompare(String(a.id || ""));
+      });
+  }
+
+  function appendReportJarCategoryRow(childList, jarKey, row, jarSpent) {
+    var catExpandKey = reportJarCatExpandKey(jarKey, row.id);
+    var catItem = document.createElement("li");
+    catItem.className = "report-jar-cat-item";
+
+    var catDetails = document.createElement("details");
+    catDetails.className = "report-jar-cat-details";
+    if (reportJarCatExpandedKeys[catExpandKey]) catDetails.open = true;
+    catDetails.addEventListener("toggle", function () {
+      if (catDetails.open) reportJarCatExpandedKeys[catExpandKey] = true;
+      else delete reportJarCatExpandedKeys[catExpandKey];
+    });
+
+    var catSummary = document.createElement("summary");
+    catSummary.className =
+      "report-jar-cat-summary" + (row.amount <= 0 ? " is-zero" : "");
+
+    var left = document.createElement("span");
+    left.className = "report-jar-cat-left";
+    var sym = document.createElement("span");
+    sym.className = "report-jar-cat-sym";
+    sym.textContent = row.sym;
+    sym.setAttribute("aria-hidden", "true");
+    var lab = document.createElement("span");
+    lab.className = "report-jar-cat-label";
+    lab.textContent = row.label;
+    left.appendChild(sym);
+    left.appendChild(lab);
+
+    var right = document.createElement("span");
+    right.className = "report-jar-cat-amt";
+    if (row.amount > 0) {
+      var pctJar = jarSpent > 0 ? Math.round((row.amount / jarSpent) * 100) : 0;
+      right.textContent =
+        formatMoneyVNDShort(row.amount) +
+        (pctJar > 0 ? " · " + pctJar + "%" : "");
+    } else {
+      right.textContent = "—";
+    }
+
+    catSummary.appendChild(left);
+    catSummary.appendChild(right);
+
+    var catPanel = document.createElement("div");
+    catPanel.className = "report-jar-cat-children";
+    var expList = document.createElement("ul");
+    expList.className = "report-jar-expense-list";
+
+    var expenses = getMonthExpensesForCategory(row.id);
+    if (!expenses.length) {
+      var emptyExp = document.createElement("li");
+      emptyExp.className = "report-jar-expense-empty";
+      emptyExp.textContent = "Chưa có khoản chi trong tháng";
+      expList.appendChild(emptyExp);
+    } else {
+      expenses.forEach(function (e) {
+        var expLi = document.createElement("li");
+        expLi.className = "report-jar-expense-row";
+
+        var expLeft = document.createElement("span");
+        expLeft.className = "report-jar-expense-left";
+
+        var expName = document.createElement("span");
+        expName.className = "report-jar-expense-name";
+        expName.textContent = expenseDisplayName(e);
+        expLeft.appendChild(expName);
+
+        if (isFixedExpenseRow(e)) {
+          var fixedTag = document.createElement("span");
+          fixedTag.className = "report-jar-expense-fixed-tag";
+          fixedTag.textContent = "CĐ";
+          fixedTag.setAttribute("aria-label", "Cố định");
+          fixedTag.title = "Cố định";
+          expLeft.appendChild(fixedTag);
+        }
+        if (isFixedExpenseNeedsMonthReview(e)) {
+          var reviewMark = document.createElement("span");
+          reviewMark.className = "expense-fixed-review-mark";
+          reviewMark.textContent = "*";
+          reviewMark.setAttribute("aria-label", "Chưa chỉnh cho tháng này");
+          expLeft.appendChild(reviewMark);
+        }
+
+        var expAmt = document.createElement("span");
+        expAmt.className = "report-jar-expense-amt";
+        expAmt.textContent = formatMoneyListShort(e.amount);
+
+        expLi.appendChild(expLeft);
+        expLi.appendChild(expAmt);
+        expList.appendChild(expLi);
+      });
+    }
+
+    catPanel.appendChild(expList);
+    catDetails.appendChild(catSummary);
+    catDetails.appendChild(catPanel);
+    catItem.appendChild(catDetails);
+    childList.appendChild(catItem);
+  }
+
   function renderReportJarsProgress() {
     if (!elPieLegend) return;
     ensureSpendingJarsNormalized();
@@ -2324,34 +2444,7 @@
         var hasSpending = false;
         catRows.forEach(function (row) {
           if (row.amount > 0) hasSpending = true;
-          var catLi = document.createElement("li");
-          catLi.className =
-            "report-jar-cat-row" + (row.amount <= 0 ? " is-zero" : "");
-          var left = document.createElement("span");
-          left.className = "report-jar-cat-left";
-          var sym = document.createElement("span");
-          sym.className = "report-jar-cat-sym";
-          sym.textContent = row.sym;
-          sym.setAttribute("aria-hidden", "true");
-          var lab = document.createElement("span");
-          lab.className = "report-jar-cat-label";
-          lab.textContent = row.label;
-          left.appendChild(sym);
-          left.appendChild(lab);
-          var right = document.createElement("span");
-          right.className = "report-jar-cat-amt";
-          if (row.amount > 0) {
-            var pctJar =
-              spent > 0 ? Math.round((row.amount / spent) * 100) : 0;
-            right.textContent =
-              formatMoneyVNDShort(row.amount) +
-              (pctJar > 0 ? " · " + pctJar + "%" : "");
-          } else {
-            right.textContent = "—";
-          }
-          catLi.appendChild(left);
-          catLi.appendChild(right);
-          childList.appendChild(catLi);
+          appendReportJarCategoryRow(childList, jarKey, row, spent);
         });
         if (!hasSpending) {
           var noneLi = document.createElement("li");
@@ -4799,6 +4892,7 @@
     syncFixedIntoMonth(state, key);
     activeMonthKey = key;
     reportJarExpandedIds = {};
+    reportJarCatExpandedKeys = {};
     reportDailyRange = "month";
     reportDailyNeedsAutoScroll = true;
     expenseListFilterDayNum = null;
