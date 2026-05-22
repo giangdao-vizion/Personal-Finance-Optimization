@@ -738,7 +738,23 @@
       </label>
       <label class="field">
         <span class="field-label">Tên khoản</span>
-        <input type="text" id="edit-expense-name" maxlength="120" autocomplete="off" />
+        <div class="expense-name-input-wrap">
+          <input
+            type="text"
+            id="edit-expense-name"
+            maxlength="120"
+            autocomplete="off"
+            aria-autocomplete="list"
+            aria-controls="edit-expense-name-suggestions"
+          />
+          <ul
+            id="edit-expense-name-suggestions"
+            class="expense-name-suggestions"
+            hidden
+            role="listbox"
+            aria-label="Gợi ý tên khoản"
+          ></ul>
+        </div>
       </label>
       <label class="field">
         <span class="field-label">Số tiền (nghìn đồng)</span>

@@ -1508,7 +1508,6 @@
   var elCategory = document.getElementById("expense-category");
   var elName = document.getElementById("expense-name");
   var elExpenseNameSuggestions = document.getElementById("expense-name-suggestions");
-  var expenseNameSuggestHideTimer = null;
   var elAmount = document.getElementById("expense-amount");
   var elExpensePreview = document.getElementById("expense-amount-preview");
   var elForm = document.getElementById("expense-form");
@@ -1660,6 +1659,21 @@
   var elEditDesc = document.getElementById("edit-expense-desc");
   var elEditExpenseCategory = document.getElementById("edit-expense-category");
   var elEditExpenseName = document.getElementById("edit-expense-name");
+  var elEditExpenseNameSuggestions = document.getElementById(
+    "edit-expense-name-suggestions"
+  );
+  var expenseNameSuggestCtxAdd = {
+    input: elName,
+    list: elExpenseNameSuggestions,
+    category: elCategory,
+    hideTimer: null,
+  };
+  var expenseNameSuggestCtxEdit = {
+    input: elEditExpenseName,
+    list: elEditExpenseNameSuggestions,
+    category: elEditExpenseCategory,
+    hideTimer: null,
+  };
   var elEditAmount = document.getElementById("edit-expense-amount");
   var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
   var elEditExpenseDate = document.getElementById("edit-expense-date");
@@ -4049,24 +4063,30 @@
       });
   }
 
-  function hideExpenseNameSuggestions() {
-    if (expenseNameSuggestHideTimer) {
-      clearTimeout(expenseNameSuggestHideTimer);
-      expenseNameSuggestHideTimer = null;
+  function hideExpenseNameSuggestions(ctx) {
+    if (!ctx) return;
+    if (ctx.hideTimer) {
+      clearTimeout(ctx.hideTimer);
+      ctx.hideTimer = null;
     }
-    if (!elExpenseNameSuggestions) return;
-    elExpenseNameSuggestions.hidden = true;
-    elExpenseNameSuggestions.innerHTML = "";
-    if (elName) elName.setAttribute("aria-expanded", "false");
+    if (!ctx.list) return;
+    ctx.list.hidden = true;
+    ctx.list.innerHTML = "";
+    if (ctx.input) ctx.input.setAttribute("aria-expanded", "false");
   }
 
-  function renderExpenseNameSuggestions() {
-    if (!elExpenseNameSuggestions || !elName) return;
-    var cat = elCategory ? elCategory.value : "";
+  function hideAllExpenseNameSuggestions() {
+    hideExpenseNameSuggestions(expenseNameSuggestCtxAdd);
+    hideExpenseNameSuggestions(expenseNameSuggestCtxEdit);
+  }
+
+  function renderExpenseNameSuggestions(ctx) {
+    if (!ctx || !ctx.list || !ctx.input) return;
+    var cat = ctx.category ? ctx.category.value : "";
     var names = getExpenseNameSuggestionsForCategory(cat);
-    elExpenseNameSuggestions.innerHTML = "";
+    ctx.list.innerHTML = "";
     if (!names.length) {
-      hideExpenseNameSuggestions();
+      hideExpenseNameSuggestions(ctx);
       return;
     }
     names.forEach(function (name) {
@@ -4080,28 +4100,54 @@
       btn.textContent = name;
       btn.addEventListener("mousedown", function (ev) {
         ev.preventDefault();
-        elName.value = name;
-        hideExpenseNameSuggestions();
-        elName.focus();
+        ctx.input.value = name;
+        hideExpenseNameSuggestions(ctx);
+        ctx.input.focus();
       });
       li.appendChild(btn);
-      elExpenseNameSuggestions.appendChild(li);
+      ctx.list.appendChild(li);
     });
-    elExpenseNameSuggestions.hidden = false;
-    elName.setAttribute("aria-expanded", "true");
+    ctx.list.hidden = false;
+    ctx.input.setAttribute("aria-expanded", "true");
   }
 
-  function showExpenseNameSuggestions() {
-    if (expenseNameSuggestHideTimer) {
-      clearTimeout(expenseNameSuggestHideTimer);
-      expenseNameSuggestHideTimer = null;
+  function showExpenseNameSuggestions(ctx) {
+    if (!ctx) return;
+    if (ctx.hideTimer) {
+      clearTimeout(ctx.hideTimer);
+      ctx.hideTimer = null;
     }
-    renderExpenseNameSuggestions();
+    renderExpenseNameSuggestions(ctx);
   }
 
-  function scheduleHideExpenseNameSuggestions() {
-    if (expenseNameSuggestHideTimer) clearTimeout(expenseNameSuggestHideTimer);
-    expenseNameSuggestHideTimer = setTimeout(hideExpenseNameSuggestions, 140);
+  function scheduleHideExpenseNameSuggestions(ctx) {
+    if (!ctx) return;
+    if (ctx.hideTimer) clearTimeout(ctx.hideTimer);
+    ctx.hideTimer = setTimeout(function () {
+      hideExpenseNameSuggestions(ctx);
+    }, 140);
+  }
+
+  function bindExpenseNameSuggestions(ctx) {
+    if (!ctx || !ctx.input) return;
+    ctx.input.addEventListener("focus", function () {
+      hideExpenseNameSuggestions(
+        ctx === expenseNameSuggestCtxAdd
+          ? expenseNameSuggestCtxEdit
+          : expenseNameSuggestCtxAdd
+      );
+      showExpenseNameSuggestions(ctx);
+    });
+    ctx.input.addEventListener("blur", function () {
+      scheduleHideExpenseNameSuggestions(ctx);
+    });
+    if (ctx.category) {
+      ctx.category.addEventListener("change", function () {
+        if (document.activeElement === ctx.input) {
+          renderExpenseNameSuggestions(ctx);
+        }
+      });
+    }
   }
 
   function pad2(n) {
@@ -4827,17 +4873,8 @@
     if (document.visibilityState === "hidden") flushIncomeFromField();
   });
 
-  if (elName) {
-    elName.addEventListener("focus", showExpenseNameSuggestions);
-    elName.addEventListener("blur", scheduleHideExpenseNameSuggestions);
-  }
-  if (elCategory) {
-    elCategory.addEventListener("change", function () {
-      if (elName && document.activeElement === elName) {
-        renderExpenseNameSuggestions();
-      }
-    });
-  }
+  bindExpenseNameSuggestions(expenseNameSuggestCtxAdd);
+  bindExpenseNameSuggestions(expenseNameSuggestCtxEdit);
 
   elForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
@@ -4885,7 +4922,7 @@
     var rowDayKey = dayKeyFromTs(expenseDateTs(row));
     alignExpenseListDayFilterFromDayKey(rowDayKey);
     elName.value = "";
-    hideExpenseNameSuggestions();
+    hideAllExpenseNameSuggestions();
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
     resetAddExpenseDateInput();
@@ -5212,6 +5249,7 @@
     closeEditFixedTemplateDialog();
     closeEditCategoryDialog();
     closeEditJarDialog();
+    hideAllExpenseNameSuggestions();
     var e = state.expenses.find(function (x) {
       return x.id === expenseId;
     });
@@ -5264,6 +5302,7 @@
 
   function closeEditExpenseDialog() {
     editingExpenseId = null;
+    hideExpenseNameSuggestions(expenseNameSuggestCtxEdit);
     if (elEditDialog) {
       elEditDialog.hidden = true;
       elEditDialog.setAttribute("aria-hidden", "true");
