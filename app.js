@@ -917,7 +917,12 @@
       if (fetchRes.data && fetchRes.data.payload) {
         isApplyingCloudSnapshot = true;
         try {
-          applyNormalizedAppData(normalizeAppDataShape(fetchRes.data.payload));
+          var localPayload = getAppPayload();
+          var merged = mergePayloadForCloud(
+            normalizeAppDataShape(fetchRes.data.payload),
+            localPayload
+          );
+          applyNormalizedAppData(merged);
           saveAppDataToLocal();
           applyThemeSettings();
           refreshAllCategorySelects();
@@ -925,7 +930,7 @@
             skipUrl: true,
           });
           lastSyncedPayload = wirePayloadSignature(getAppPayload());
-          setAuthSyncHint("Đã tải dữ liệu từ cloud.", "ok");
+          setAuthSyncHint("Đã gộp dữ liệu máy + cloud.", "ok");
         } finally {
           isApplyingCloudSnapshot = false;
         }
@@ -1018,14 +1023,16 @@
           if (cloudSig === lastSyncedPayload) return;
           isApplyingCloudSnapshot = true;
           try {
-            applyNormalizedAppData(cloudData);
+            var localPayload = getAppPayload();
+            var merged = mergePayloadForCloud(cloudData, localPayload);
+            applyNormalizedAppData(merged);
             saveAppDataToLocal();
             applyThemeSettings();
             refreshAllCategorySelects();
             openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
               skipUrl: true,
             });
-            lastSyncedPayload = cloudSig;
+            lastSyncedPayload = wirePayloadSignature(getAppPayload());
           } finally {
             isApplyingCloudSnapshot = false;
           }
@@ -5717,13 +5724,28 @@
   document.addEventListener("visibilitychange", function () {
     if (!supabaseEnabled || !supabaseClient) return;
     if (document.visibilityState === "hidden") {
+      if (cloudSyncTimer) {
+        clearTimeout(cloudSyncTimer);
+        cloudSyncTimer = null;
+      }
       void syncToSupabaseNow();
     } else if (document.visibilityState === "visible") {
-      void pullSupabaseStateAndRender();
+      if (cloudSyncTimer) {
+        clearTimeout(cloudSyncTimer);
+        cloudSyncTimer = null;
+      }
+      void (async function () {
+        await syncToSupabaseNow();
+        await pullSupabaseStateAndRender();
+      })();
     }
   });
   window.addEventListener("pagehide", function () {
     if (supabaseEnabled && supabaseClient) {
+      if (cloudSyncTimer) {
+        clearTimeout(cloudSyncTimer);
+        cloudSyncTimer = null;
+      }
       void syncToSupabaseNow();
     }
   });
