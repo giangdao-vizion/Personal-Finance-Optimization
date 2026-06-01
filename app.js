@@ -726,20 +726,30 @@
 
   async function syncToSupabaseNow() {
     if (!supabaseEnabled || !supabaseClient || isApplyingCloudSnapshot) return;
-    var payload = getAppPayload();
-    var payloadSig = wirePayloadSignature(payload);
-    if (payloadSig === lastSyncedPayload) return;
-    var mergedPayload = payload;
+    var mergedPayload;
+    var remotePayload = null;
     try {
       var remoteRes = await supabaseClient
         .from(SUPABASE_TABLE)
         .select("payload")
         .eq("id", SUPABASE_STATE_ID)
         .maybeSingle();
+      var localPayload = getAppPayload();
       if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
-        mergedPayload = mergePayloadForCloud(remoteRes.data.payload, payload);
+        remotePayload = remoteRes.data.payload;
+        mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
+      } else {
+        mergedPayload = normalizeAppDataShape(localPayload);
       }
-    } catch (eRemote) {}
+    } catch (eRemote) {
+      mergedPayload = normalizeAppDataShape(getAppPayload());
+    }
+    var mergedSig = wirePayloadSignature(mergedPayload);
+    var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
+    if (mergedSig && mergedSig === remoteSig) {
+      lastSyncedPayload = mergedSig;
+      return;
+    }
     var res = await supabaseClient.from(SUPABASE_TABLE).upsert(
       {
         id: SUPABASE_STATE_ID,
@@ -750,9 +760,9 @@
     );
     if (!res.error) {
       try {
-        lastSyncedPayload = wirePayloadSignature(mergedPayload);
+        lastSyncedPayload = mergedSig;
       } catch (e2) {
-        lastSyncedPayload = payloadSig;
+        lastSyncedPayload = "";
       }
       setAuthSyncHint("Đã lưu lên cloud.", "ok");
     } else {
@@ -899,6 +909,15 @@
       : [];
     ensureSpendingJarsNormalized();
     normalizeAllFixedTemplates();
+    rebindActiveMonthState();
+  }
+
+  /** Giữ `state` trỏ đúng tháng sau khi gộp cloud (tránh ghi vào object tháng cũ). */
+  function rebindActiveMonthState() {
+    if (!activeMonthKey) return;
+    var m = app.months[activeMonthKey];
+    if (!m || isMonthDeleted(m)) return;
+    state = m;
   }
 
   async function pullSupabaseStateAndRender() {
@@ -1036,6 +1055,7 @@
           } finally {
             isApplyingCloudSnapshot = false;
           }
+          queueSupabaseSync();
         }
       )
       .subscribe();
@@ -2947,12 +2967,13 @@
     }
     app.fixedTemplates.forEach(function (t) {
       if (!t || !t.id || !categoryIdExists(t.category) || isRowDeleted(t)) return;
-      var exists = m.expenses.some(function (e) {
-        // Keep month-level deletion tombstones: if user deleted a fixed row in this month,
-        // do not auto-recreate it after refresh.
-        return e.templateId === t.id;
+      var hasLive = m.expenses.some(function (e) {
+        return e.templateId === t.id && !isRowDeleted(e);
       });
-      if (!exists) {
+      var hasTombstone = m.expenses.some(function (e) {
+        return e.templateId === t.id && isRowDeleted(e);
+      });
+      if (!hasLive && !hasTombstone) {
         m.expenses.push({
           id: uid(),
           templateId: t.id,
