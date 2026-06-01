@@ -1312,9 +1312,16 @@ body.settings-pointer-dragging {
 }
 
 .report-jar-expense-list {
+  --report-jar-expense-row-h: calc(0.56rem + 0.75rem * 1.35);
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.report-jar-expense-list:has(.report-jar-expense-row) {
+  max-height: calc(var(--report-jar-expense-row-h) * 10 + 9 * 1px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .report-jar-expense-row {

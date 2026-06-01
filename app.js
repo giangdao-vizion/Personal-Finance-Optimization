@@ -2245,6 +2245,39 @@
       });
   }
 
+  function reportJarExpenseGroupKey(displayName) {
+    return String(displayName || "")
+      .trim()
+      .toLocaleLowerCase("vi");
+  }
+
+  /** Gộp khoản chi cùng tên (không phân biệt hoa thường) cho báo cáo hũ. */
+  function groupReportJarExpensesForDisplay(expenses) {
+    var map = {};
+    var order = [];
+    expenses.forEach(function (e) {
+      var name = expenseDisplayName(e);
+      var key = reportJarExpenseGroupKey(name);
+      if (!key) key = "\x00";
+      if (!map[key]) {
+        map[key] = {
+          displayName: name,
+          amount: 0,
+          hasFixed: false,
+          needsReview: false,
+        };
+        order.push(key);
+      }
+      var g = map[key];
+      g.amount += Number(e.amount) || 0;
+      if (isFixedExpenseRow(e)) g.hasFixed = true;
+      if (isFixedExpenseNeedsMonthReview(e)) g.needsReview = true;
+    });
+    return order.map(function (k) {
+      return map[k];
+    });
+  }
+
   function appendReportJarCategoryRow(childList, jarKey, row, jarSpent) {
     var catExpandKey = reportJarCatExpandKey(jarKey, row.id);
     var catItem = document.createElement("li");
@@ -2300,7 +2333,7 @@
       emptyExp.textContent = "Chưa có khoản chi trong tháng";
       expList.appendChild(emptyExp);
     } else {
-      expenses.forEach(function (e) {
+      groupReportJarExpensesForDisplay(expenses).forEach(function (row) {
         var expLi = document.createElement("li");
         expLi.className = "report-jar-expense-row";
 
@@ -2309,10 +2342,10 @@
 
         var expName = document.createElement("span");
         expName.className = "report-jar-expense-name";
-        expName.textContent = expenseDisplayName(e);
+        expName.textContent = row.displayName;
         expLeft.appendChild(expName);
 
-        if (isFixedExpenseRow(e)) {
+        if (row.hasFixed) {
           var fixedTag = document.createElement("span");
           fixedTag.className = "report-jar-expense-fixed-tag";
           fixedTag.textContent = "CĐ";
@@ -2320,7 +2353,7 @@
           fixedTag.title = "Cố định";
           expLeft.appendChild(fixedTag);
         }
-        if (isFixedExpenseNeedsMonthReview(e)) {
+        if (row.needsReview) {
           var reviewMark = document.createElement("span");
           reviewMark.className = "expense-fixed-review-mark";
           reviewMark.textContent = "*";
@@ -2330,7 +2363,7 @@
 
         var expAmt = document.createElement("span");
         expAmt.className = "report-jar-expense-amt";
-        expAmt.textContent = formatMoneyListShort(e.amount);
+        expAmt.textContent = formatMoneyListShort(row.amount);
 
         expLi.appendChild(expLeft);
         expLi.appendChild(expAmt);
