@@ -452,6 +452,10 @@
       return "";
     }
     var w = {
+      dataUpdatedAt:
+        typeof n.dataUpdatedAt === "number" && n.dataUpdatedAt > 0
+          ? Math.round(n.dataUpdatedAt)
+          : 0,
       months: n.months,
       fixedTemplates: n.fixedTemplates,
       settings: settingsForCloudStorage(n.settings),
@@ -486,6 +490,10 @@
     var spendingJarsSrc = Array.isArray(src.spendingJars) ? src.spendingJars : [];
     var spendingJars = spendingJarsSrc.map(normalizeSpendingJarRow);
     return {
+      dataUpdatedAt:
+        typeof src.dataUpdatedAt === "number" && src.dataUpdatedAt > 0
+          ? Math.round(src.dataUpdatedAt)
+          : 0,
       months: months,
       fixedTemplates: fixedTemplates,
       settings: settings,
@@ -562,6 +570,19 @@
   var isApplyingCloudSnapshot = false;
   var cloudSyncTimer = null;
   var authStateListenerBound = false;
+  /** Không áp snapshot cloud xuống UI ngay sau khi user vừa sửa (tránh ghi đè khoản mới). */
+  var LOCAL_CLOUD_GUARD_MS = 5000;
+  var lastLocalDataTouchAt = 0;
+  var syncInFlight = false;
+  var syncPending = false;
+
+  function touchLocalData() {
+    lastLocalDataTouchAt = Date.now();
+  }
+
+  function shouldDeferCloudDownstreamApply() {
+    return Date.now() - lastLocalDataTouchAt < LOCAL_CLOUD_GUARD_MS;
+  }
 
   function setAuthSyncHint(text, kind) {
     var el = document.getElementById("auth-sync-hint");
@@ -616,12 +637,20 @@
 
   function getAppPayload() {
     return {
+      dataUpdatedAt:
+        typeof app.dataUpdatedAt === "number" && app.dataUpdatedAt > 0
+          ? Math.round(app.dataUpdatedAt)
+          : 0,
       months: app.months,
       fixedTemplates: app.fixedTemplates,
       settings: app.settings,
       categories: app.categories,
       spendingJars: app.spendingJars,
     };
+  }
+
+  function bumpDataRevision() {
+    app.dataUpdatedAt = nowTs();
   }
 
   function mergeRowsById(remoteRows, localRows, getId, getUpdated) {
@@ -652,6 +681,10 @@
     var remote = normalizeAppDataShape(remotePayload || {});
     var local = normalizeAppDataShape(localPayload || {});
     var merged = {
+      dataUpdatedAt: Math.max(
+        remote.dataUpdatedAt || 0,
+        local.dataUpdatedAt || 0
+      ),
       months: {},
       fixedTemplates: mergeRowsById(
         remote.fixedTemplates,
@@ -685,12 +718,21 @@
       var rmDeletedAt = typeof rm.deletedAt === "number" ? rm.deletedAt : 0;
       var lmDeletedAt = typeof lm.deletedAt === "number" ? lm.deletedAt : 0;
       if (rmDeletedAt > 0 || lmDeletedAt > 0) {
-        if (rmDeletedAt >= lmDeletedAt) {
-          merged.months[k] = { deletedAt: rmDeletedAt };
-        } else {
-          merged.months[k] = { deletedAt: lmDeletedAt };
+        var localMonthAlive =
+          lmDeletedAt <= 0 &&
+          ((typeof lm.income === "number" && lm.income > 0) ||
+            (Array.isArray(lm.expenses) &&
+              lm.expenses.some(function (e) {
+                return !isRowDeleted(e);
+              })));
+        if (!localMonthAlive) {
+          if (rmDeletedAt >= lmDeletedAt) {
+            merged.months[k] = { deletedAt: rmDeletedAt };
+          } else {
+            merged.months[k] = { deletedAt: lmDeletedAt };
+          }
+          return;
         }
-        return;
       }
       merged.months[k] = {
         income:
@@ -715,7 +757,7 @@
         ).map(normalizeExpenseRow),
       };
     });
-    return merged;
+    return finalizeMergeWithActiveMonthState(merged);
   }
 
   function saveAppDataToLocal() {
@@ -726,66 +768,102 @@
 
   async function syncToSupabaseNow() {
     if (!supabaseEnabled || !supabaseClient || isApplyingCloudSnapshot) return;
-    var mergedPayload;
-    var remotePayload = null;
-    try {
-      var remoteRes = await supabaseClient
-        .from(SUPABASE_TABLE)
-        .select("payload")
-        .eq("id", SUPABASE_STATE_ID)
-        .maybeSingle();
-      var localPayload = getAppPayload();
-      if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
-        remotePayload = remoteRes.data.payload;
-        mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
-      } else {
-        mergedPayload = normalizeAppDataShape(localPayload);
-      }
-    } catch (eRemote) {
-      mergedPayload = normalizeAppDataShape(getAppPayload());
-    }
-    var mergedSig = wirePayloadSignature(mergedPayload);
-    var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
-    if (mergedSig && mergedSig === remoteSig) {
-      lastSyncedPayload = mergedSig;
+    if (syncInFlight) {
+      syncPending = true;
       return;
     }
-    var res = await supabaseClient.from(SUPABASE_TABLE).upsert(
-      {
-        id: SUPABASE_STATE_ID,
-        payload: mergedPayload,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
-    if (!res.error) {
+    syncInFlight = true;
+    try {
+      var mergedPayload;
+      var remotePayload = null;
       try {
-        lastSyncedPayload = mergedSig;
-      } catch (e2) {
-        lastSyncedPayload = "";
+        var remoteRes = await supabaseClient
+          .from(SUPABASE_TABLE)
+          .select("payload")
+          .eq("id", SUPABASE_STATE_ID)
+          .maybeSingle();
+        var localPayload = getAppPayloadForSync();
+        if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
+          remotePayload = remoteRes.data.payload;
+          mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
+        } else {
+          mergedPayload = normalizeAppDataShape(localPayload);
+        }
+      } catch (eRemote) {
+        mergedPayload = normalizeAppDataShape(getAppPayloadForSync());
       }
-      setAuthSyncHint("Đã lưu lên cloud.", "ok");
-    } else {
-      console.warn("Supabase sync failed:", res.error.message);
-      setAuthSyncHint("Không ghi được cloud: " + res.error.message, "error");
+      var mergedSig = wirePayloadSignature(mergedPayload);
+      var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
+      if (mergedSig && mergedSig === remoteSig) {
+        lastSyncedPayload = mergedSig;
+        return;
+      }
+      var res = await supabaseClient.from(SUPABASE_TABLE).upsert(
+        {
+          id: SUPABASE_STATE_ID,
+          payload: mergedPayload,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" }
+      );
+      if (!res.error) {
+        try {
+          lastSyncedPayload = mergedSig;
+        } catch (e2) {
+          lastSyncedPayload = "";
+        }
+        setAuthSyncHint("Đã lưu lên cloud.", "ok");
+      } else {
+        console.warn("Supabase sync failed:", res.error.message);
+        setAuthSyncHint("Không ghi được cloud: " + res.error.message, "error");
+      }
+    } finally {
+      syncInFlight = false;
+      if (syncPending) {
+        syncPending = false;
+        void syncToSupabaseNow();
+      }
     }
   }
 
-  function queueSupabaseSync() {
+  function queueSupabaseSync(immediate) {
     if (!supabaseEnabled || isApplyingCloudSnapshot) return;
-    if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+    if (cloudSyncTimer) {
+      clearTimeout(cloudSyncTimer);
+      cloudSyncTimer = null;
+    }
+    if (immediate) {
+      void syncToSupabaseNow();
+      return;
+    }
     cloudSyncTimer = setTimeout(function () {
       cloudSyncTimer = null;
       syncToSupabaseNow();
     }, 350);
   }
 
-  function saveAppData() {
+  /** Ghi localStorage ngay (sau flush state → app.months). */
+  function persistLocalNow() {
+    touchLocalData();
+    flushActiveMonthIntoApp();
+    bumpDataRevision();
     saveAppDataToLocal();
-    queueSupabaseSync();
+  }
+
+  /**
+   * @param {{ immediateSync?: boolean, sync?: boolean }} [opts]
+   * immediateSync: đẩy cloud ngay; mặc định debounce 350ms.
+   * sync: false = chỉ local.
+   */
+  function saveAppData(opts) {
+    opts = opts || {};
+    persistLocalNow();
+    if (opts.sync === false) return;
+    queueSupabaseSync(!!opts.immediateSync);
   }
 
   var app = loadAppData();
+  if (typeof app.dataUpdatedAt !== "number") app.dataUpdatedAt = 0;
   if (!Array.isArray(app.fixedTemplates)) app.fixedTemplates = defaultFixedTemplates();
   if (!app.settings || typeof app.settings !== "object") app.settings = defaultSettings();
   app.settings = normalizeSettings(app.settings);
@@ -897,6 +975,10 @@
     var preservedTheme = normalizeThemeMode(
       app && app.settings && app.settings.themeMode ? app.settings.themeMode : "dark"
     );
+    app.dataUpdatedAt =
+      typeof nextData.dataUpdatedAt === "number" && nextData.dataUpdatedAt > 0
+        ? Math.round(nextData.dataUpdatedAt)
+        : 0;
     app.months = nextData.months;
     app.fixedTemplates = nextData.fixedTemplates;
     app.settings = normalizeSettings(nextData.settings);
@@ -915,6 +997,7 @@
   /** Giữ `state` trỏ đúng tháng sau khi gộp cloud (tránh ghi vào object tháng cũ). */
   function rebindActiveMonthState() {
     if (!activeMonthKey) return;
+    flushActiveMonthIntoApp();
     var m = app.months[activeMonthKey];
     if (!m || isMonthDeleted(m)) return;
     state = m;
@@ -922,6 +1005,10 @@
 
   async function pullSupabaseStateAndRender() {
     if (!supabaseClient || !supabaseEnabled) return;
+    if (shouldDeferCloudDownstreamApply()) {
+      await syncToSupabaseNow();
+      return;
+    }
     try {
       var fetchRes = await supabaseClient
         .from(SUPABASE_TABLE)
@@ -936,19 +1023,12 @@
       if (fetchRes.data && fetchRes.data.payload) {
         isApplyingCloudSnapshot = true;
         try {
-          var localPayload = getAppPayload();
+          var localPayload = getAppPayloadForSync();
           var merged = mergePayloadForCloud(
             normalizeAppDataShape(fetchRes.data.payload),
             localPayload
           );
-          applyNormalizedAppData(merged);
-          saveAppDataToLocal();
-          applyThemeSettings();
-          refreshAllCategorySelects();
-          openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
-            skipUrl: true,
-          });
-          lastSyncedPayload = wirePayloadSignature(getAppPayload());
+          applyCloudMergedPayload(merged);
           setAuthSyncHint("Đã gộp dữ liệu máy + cloud.", "ok");
         } finally {
           isApplyingCloudSnapshot = false;
@@ -974,6 +1054,8 @@
     }
     setAuthSyncHint("Đang gộp dữ liệu máy + cloud và lưu...", "ok");
     try {
+      flushActiveMonthIntoApp();
+      var activeMonthPin = pinActiveMonthSnapshot();
       var fetchRes = await supabaseClient
         .from(SUPABASE_TABLE)
         .select("payload")
@@ -983,22 +1065,18 @@
         setAuthSyncHint("Không đọc cloud: " + fetchRes.error.message, "error");
         return;
       }
-      var localPayload = getAppPayload();
+      flushActiveMonthIntoApp();
+      var localPayload = getAppPayloadForSync();
       var merged;
       if (fetchRes.data && fetchRes.data.payload) {
         merged = mergePayloadForCloud(fetchRes.data.payload, localPayload);
       } else {
         merged = normalizeAppDataShape(localPayload);
       }
+      merged = mergePinnedActiveMonth(merged, activeMonthPin);
       isApplyingCloudSnapshot = true;
       try {
-        applyNormalizedAppData(merged);
-        saveAppDataToLocal();
-        applyThemeSettings();
-        refreshAllCategorySelects();
-        openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
-          skipUrl: true,
-        });
+        applyCloudMergedPayload(merged);
       } finally {
         isApplyingCloudSnapshot = false;
       }
@@ -1037,25 +1115,21 @@
         },
         function (payload) {
           if (!payload || !payload.new || !payload.new.payload) return;
+          if (shouldDeferCloudDownstreamApply()) {
+            queueSupabaseSync();
+            return;
+          }
           var cloudData = normalizeAppDataShape(payload.new.payload);
           var cloudSig = wirePayloadSignature(cloudData);
           if (cloudSig === lastSyncedPayload) return;
           isApplyingCloudSnapshot = true;
           try {
-            var localPayload = getAppPayload();
+            var localPayload = getAppPayloadForSync();
             var merged = mergePayloadForCloud(cloudData, localPayload);
-            applyNormalizedAppData(merged);
-            saveAppDataToLocal();
-            applyThemeSettings();
-            refreshAllCategorySelects();
-            openMonth(activeMonthKey || supabaseInitialMonthKey || currentMonthKey(), {
-              skipUrl: true,
-            });
-            lastSyncedPayload = wirePayloadSignature(getAppPayload());
+            applyCloudMergedPayload(merged);
           } finally {
             isApplyingCloudSnapshot = false;
           }
-          queueSupabaseSync();
         }
       )
       .subscribe();
@@ -1431,6 +1505,21 @@
     if (typeof app.months[k].income !== "number") app.months[k].income = 0;
     migrateMonthIncomeUserSet(app.months[k]);
     return app.months[k];
+  }
+
+  /**
+   * Sau khi gộp cloud, `state` đôi khi vẫn trỏ object tháng cũ (đã tách khỏi `app.months`).
+   * Gộp các chỉnh sửa trên `state` vào bucket chính trước khi đọc/ghi payload.
+   */
+  function flushActiveMonthIntoApp() {
+    if (!activeMonthKey || !state) return;
+    app.months[activeMonthKey] = state;
+    state = ensureMonth(activeMonthKey);
+  }
+
+  function getAppPayloadForSync() {
+    flushActiveMonthIntoApp();
+    return getAppPayload();
   }
 
   function totalExpensesForMonth(m) {
@@ -2935,11 +3024,16 @@
       typeof row.updatedAt === "number" && row.updatedAt > 0
         ? Math.round(row.updatedAt)
         : expenseCreatedAt(row) || nowTs();
+    var createdAt =
+      typeof row.createdAt === "number" && row.createdAt > 0
+        ? Math.round(row.createdAt)
+        : expenseCreatedAt(row) || updatedAt;
     var o = {
       id: row.id || uid(),
       category: cat,
       name: typeof row.name === "string" ? row.name.trim() : "",
       amount: typeof row.amount === "number" && row.amount >= 0 ? Math.round(row.amount) : 0,
+      createdAt: createdAt,
       updatedAt: updatedAt,
     };
     if (typeof row.dateTs === "number" && row.dateTs > 0) {
@@ -2951,6 +3045,53 @@
       o.deletedAt = Math.round(row.deletedAt);
     }
     return o;
+  }
+
+  /** Ảnh chụp tháng đang mở trên UI (trước await cloud) — tránh mất khoản vừa nhập khi bấm đồng bộ. */
+  function pinActiveMonthSnapshot() {
+    if (!activeMonthKey || !state) return null;
+    return {
+      key: activeMonthKey,
+      income: typeof state.income === "number" ? state.income : 0,
+      incomeUserSet: !!state.incomeUserSet,
+      expenses: (state.expenses || []).map(normalizeExpenseRow),
+    };
+  }
+
+  function mergePinnedActiveMonth(payload, pin) {
+    if (!pin || !pin.key) return payload;
+    var out = normalizeAppDataShape(payload || {});
+    var cur = out.months[pin.key] || {};
+    out.months[pin.key] = {
+      income:
+        typeof pin.income === "number"
+          ? pin.income
+          : typeof cur.income === "number"
+          ? cur.income
+          : 0,
+      incomeUserSet:
+        pin.incomeUserSet !== undefined
+          ? !!pin.incomeUserSet
+          : cur.incomeUserSet !== undefined
+          ? !!cur.incomeUserSet
+          : false,
+      expenses: mergeRowsById(
+        cur.expenses || [],
+        pin.expenses || [],
+        function (e) {
+          return e && e.id;
+        },
+        expenseUpdatedAt
+      ).map(normalizeExpenseRow),
+    };
+    return out;
+  }
+
+  /** Sau merge cloud, luôn gộp lại danh sách chi đang hiển thị (`state`). */
+  function finalizeMergeWithActiveMonthState(merged) {
+    if (!activeMonthKey || !state) return merged;
+    flushActiveMonthIntoApp();
+    return mergePinnedActiveMonth(merged, pinActiveMonthSnapshot());
   }
 
   function syncFixedIntoMonth(m, monthKey) {
@@ -3765,9 +3906,10 @@
   function removeFixedTemplateById(templateId) {
     var t = findFixedTemplate(templateId);
     if (!t) return;
-    t.deletedAt = nowTs();
-    t.updatedAt = nowTs();
-    saveAppData();
+    var delTs = nowTs();
+    t.deletedAt = delTs;
+    t.updatedAt = delTs;
+    saveAppData({ immediateSync: true });
     renderFixedTemplatesList();
   }
 
@@ -4468,9 +4610,43 @@
     }, 2000);
   }
 
-  function persistAndRender() {
+  function applyCloudMergedPayload(merged) {
+    applyNormalizedAppData(merged);
+    saveAppDataToLocal();
+    applyThemeSettings();
+    refreshAllCategorySelects();
+    refreshMonthUiAfterCloudMerge();
+    lastSyncedPayload = wirePayloadSignature(getAppPayloadForSync());
+  }
+
+  function refreshMonthUiAfterCloudMerge() {
+    rebindActiveMonthState();
+    if (state && activeMonthKey) {
+      state.expenses = state.expenses.map(normalizeExpenseRow);
+      syncFixedIntoMonth(state, activeMonthKey);
+    }
+    renderSummary();
+    renderExpenseList();
+    renderReportModeButtons();
+    if (reportMode === "daily") {
+      renderDailyReportChart();
+    } else {
+      renderPieChart();
+    }
+    renderFixedTemplatesList();
+    renderReportJarsProgress();
+    if (elSideMenu && !elSideMenu.hidden) {
+      renderSideMenuList();
+    }
+    if (elViewSettings && !elViewSettings.hidden) {
+      renderSettingsCategoriesList();
+      renderSettingsJarsList();
+    }
+  }
+
+  function persistAndRender(opts) {
     if (!activeMonthKey || !state) return;
-    saveAppData();
+    saveAppData(opts);
     renderSummary();
     renderExpenseList();
     renderReportModeButtons();
@@ -4496,9 +4672,10 @@
       return x.id === id;
     });
     if (!e) return;
-    e.deletedAt = nowTs();
-    e.updatedAt = nowTs();
-    persistAndRender();
+    var delTs = nowTs();
+    e.deletedAt = delTs;
+    e.updatedAt = delTs;
+    persistAndRender({ immediateSync: true });
   }
 
   var EXPENSE_SWIPE_DELETE_PX = 64;
@@ -5061,19 +5238,23 @@
         updatedAt: nowTs(),
       });
     }
+    var rowTs = nowTs();
     var row = {
       id: uid(),
       category: cat,
       name: nameTrim,
       amount: amount,
-      updatedAt: nowTs(),
+      createdAt: rowTs,
+      updatedAt: rowTs,
     };
     if (dateTs > 0) row.dateTs = dateTs;
     if (templateId) {
       row.templateId = templateId;
       row.monthEdited = true;
     }
+    flushActiveMonthIntoApp();
     state.expenses.push(row);
+    touchLocalData();
     var rowDayKey = dayKeyFromTs(expenseDateTs(row));
     alignExpenseListDayFilterFromDayKey(rowDayKey);
     elName.value = "";
@@ -5082,7 +5263,7 @@
     updateAmountPreview(elAmount, elExpensePreview);
     resetAddExpenseDateInput();
     if (elExpenseFixed) elExpenseFixed.checked = false;
-    persistAndRender();
+    persistAndRender({ immediateSync: true });
     scrollAndHighlightExpenseRow(row.id);
   });
 
@@ -5514,10 +5695,10 @@
     t.amount = amount;
     t.updatedAt = nowTs();
     syncExpenseRowsFromTemplate(t);
-    saveAppData();
     closeEditFixedTemplateDialog();
     renderFixedTemplatesList();
-    if (activeMonthKey && state) persistAndRender();
+    if (activeMonthKey && state) persistAndRender({ immediateSync: true });
+    else saveAppData({ immediateSync: true });
   }
 
   function saveEditExpenseDialog() {
@@ -5579,7 +5760,7 @@
       }
     }
     closeEditExpenseDialog();
-    persistAndRender();
+    persistAndRender({ immediateSync: true });
   }
 
   document.addEventListener("keydown", function (ev) {
@@ -5790,7 +5971,9 @@
       }
       void (async function () {
         await syncToSupabaseNow();
-        await pullSupabaseStateAndRender();
+        if (!shouldDeferCloudDownstreamApply()) {
+          await pullSupabaseStateAndRender();
+        }
       })();
     }
   });
