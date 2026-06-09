@@ -1378,6 +1378,15 @@
     return findSpendingJar(v) ? v : "";
   }
 
+  function readCategoryJarPickerValue(hiddenInputEl, pickerEl) {
+    var v = readCategoryJarSelectValue(hiddenInputEl);
+    if (v) return v;
+    if (!pickerEl) return "";
+    var selected = pickerEl.querySelector(".category-jar-picker-btn.is-selected");
+    var selectedId = selected ? selected.dataset.jarId || "" : "";
+    return findSpendingJar(selectedId) ? selectedId : "";
+  }
+
   function findSpendingJar(jarId) {
     if (!jarId || !Array.isArray(app.spendingJars)) return null;
     var i;
@@ -3215,7 +3224,10 @@
       }
     }
     if (!ok) c.iconId = "pin";
-    setCategoryJarAssignment(editingCategoryId, readCategoryJarSelectValue(elEditCategoryJar));
+    setCategoryJarAssignment(
+      editingCategoryId,
+      readCategoryJarPickerValue(elEditCategoryJar, elEditCategoryJarPicker)
+    );
     saveAppData();
     closeEditCategoryDialog();
     renderSettingsCategoriesList();
@@ -5689,7 +5701,10 @@
       var iconId = elSettingsNewCategoryIconId ? elSettingsNewCategoryIconId.value : "food";
       var newCat = normalizeCategoryRow({ id: catUid(), label: lab, iconId: iconId });
       app.categories.push(newCat);
-      setCategoryJarAssignment(newCat.id, readCategoryJarSelectValue(elSettingsNewCategoryJar));
+      setCategoryJarAssignment(
+        newCat.id,
+        readCategoryJarPickerValue(elSettingsNewCategoryJar, elSettingsNewCategoryJarPicker)
+      );
       saveAppData();
       renderSettingsCategoriesList();
       renderSettingsJarsList();
