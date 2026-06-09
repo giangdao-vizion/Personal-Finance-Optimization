@@ -1573,6 +1573,238 @@
     return out;
   }
 
+  function exportableMonthKeys() {
+    var out = [];
+    flushActiveMonthIntoApp();
+    Object.keys(app.months || {}).forEach(function (k) {
+      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(k) && monthHasData(k)) out.push(k);
+    });
+    out.sort(function (a, b) {
+      return b.localeCompare(a);
+    });
+    return out;
+  }
+
+  function setSettingsDataStatus(message, kind) {
+    if (!elSettingsDataStatus) return;
+    if (!message) {
+      elSettingsDataStatus.textContent = "";
+      elSettingsDataStatus.hidden = true;
+      elSettingsDataStatus.classList.remove("is-error", "is-ok");
+      return;
+    }
+    elSettingsDataStatus.textContent = message;
+    elSettingsDataStatus.hidden = false;
+    elSettingsDataStatus.classList.toggle("is-error", kind === "error");
+    elSettingsDataStatus.classList.toggle("is-ok", kind === "ok");
+  }
+
+  function selectedExportMonthKeys() {
+    if (!elSettingsExportMonths) return [];
+    var out = [];
+    var inputs = elSettingsExportMonths.querySelectorAll(
+      'input[type="checkbox"][data-month-key]'
+    );
+    var i;
+    for (i = 0; i < inputs.length; i++) {
+      if (inputs[i].checked) out.push(inputs[i].getAttribute("data-month-key"));
+    }
+    return out;
+  }
+
+  function syncExportToggleAllLabel() {
+    if (!elBtnExportDataToggleAll || !elSettingsExportMonths) return;
+    var inputs = elSettingsExportMonths.querySelectorAll(
+      'input[type="checkbox"][data-month-key]'
+    );
+    var checked = elSettingsExportMonths.querySelectorAll(
+      'input[type="checkbox"][data-month-key]:checked'
+    );
+    elBtnExportDataToggleAll.textContent =
+      inputs.length > 0 && checked.length === inputs.length ? "Bỏ chọn" : "Tất cả";
+    elBtnExportDataToggleAll.disabled = inputs.length === 0;
+  }
+
+  function renderExportMonthPicker() {
+    if (!elSettingsExportMonths) return;
+    var keys = exportableMonthKeys();
+    elSettingsExportMonths.innerHTML = "";
+    if (!keys.length) {
+      var empty = document.createElement("p");
+      empty.className = "settings-export-empty";
+      empty.textContent = "Chưa có tháng nào có dữ liệu để export.";
+      elSettingsExportMonths.appendChild(empty);
+      if (elBtnExportData) elBtnExportData.disabled = true;
+      syncExportToggleAllLabel();
+      return;
+    }
+    if (elBtnExportData) elBtnExportData.disabled = false;
+    keys.forEach(function (key) {
+      var label = document.createElement("label");
+      label.className = "settings-export-month-row";
+
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = true;
+      input.setAttribute("data-month-key", key);
+      input.addEventListener("change", syncExportToggleAllLabel);
+
+      var text = document.createElement("span");
+      text.className = "settings-export-month-text";
+      text.textContent = formatMonthKeyVi(key);
+
+      var meta = document.createElement("span");
+      meta.className = "settings-export-month-meta";
+      var month = app.months[key] || {};
+      var liveExpenseCount = Array.isArray(month.expenses)
+        ? month.expenses.filter(function (e) {
+            return !isRowDeleted(e);
+          }).length
+        : 0;
+      meta.textContent =
+        liveExpenseCount +
+        " khoản" +
+        ((month.income || 0) > 0 ? " · " + formatMoneyVNDShort(month.income) : "");
+
+      label.appendChild(input);
+      label.appendChild(text);
+      label.appendChild(meta);
+      elSettingsExportMonths.appendChild(label);
+    });
+    syncExportToggleAllLabel();
+  }
+
+  function buildBackupPayload(monthKeys) {
+    flushActiveMonthIntoApp();
+    var keySet = {};
+    monthKeys.forEach(function (k) {
+      keySet[k] = true;
+    });
+    var months = {};
+    Object.keys(app.months || {}).forEach(function (k) {
+      if (keySet[k] && app.months[k] && !isMonthDeleted(app.months[k])) {
+        months[k] = app.months[k];
+      }
+    });
+    var data = getAppPayload();
+    data.months = months;
+    return {
+      app: "Personal Finance Optimization",
+      type: "family-budget-backup",
+      version: 2,
+      storageKey: STORAGE_V2,
+      exportedAt: new Date().toISOString(),
+      data: data,
+    };
+  }
+
+  function downloadJsonFile(filename, data) {
+    var blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, 0);
+  }
+
+  function exportSelectedData() {
+    var selected = selectedExportMonthKeys();
+    if (!selected.length) {
+      setSettingsDataStatus("Chọn ít nhất một tháng để export.", "error");
+      return;
+    }
+    var payload = buildBackupPayload(selected);
+    var datePart = new Date().toISOString().slice(0, 10);
+    downloadJsonFile("chi-tieu-tracker-backup-" + datePart + ".json", payload);
+    setSettingsDataStatus(
+      "Đã tạo file backup gồm " + selected.length + " tháng và toàn bộ cài đặt app.",
+      "ok"
+    );
+  }
+
+  function readImportBackupData(parsed) {
+    var src = parsed && typeof parsed === "object" ? parsed : null;
+    if (!src) throw new Error("File JSON không hợp lệ.");
+    var data = src.data && typeof src.data === "object" ? src.data : src;
+    if (!data.months || typeof data.months !== "object") {
+      throw new Error("File không có dữ liệu tháng hợp lệ.");
+    }
+    return normalizeAppDataShape(data);
+  }
+
+  function replaceAppDataFromImport(nextData) {
+    var importedTheme = normalizeThemeMode(
+      nextData && nextData.settings && nextData.settings.themeMode
+    );
+    app.dataUpdatedAt = nowTs();
+    app.months = nextData.months || {};
+    app.fixedTemplates = Array.isArray(nextData.fixedTemplates)
+      ? nextData.fixedTemplates
+      : defaultFixedTemplates();
+    app.settings = normalizeSettings(nextData.settings);
+    app.settings.themeMode = importedTheme;
+    app.categories = Array.isArray(nextData.categories) && nextData.categories.length
+      ? nextData.categories
+      : defaultCategories();
+    app.spendingJars = Array.isArray(nextData.spendingJars)
+      ? nextData.spendingJars.map(normalizeSpendingJarRow)
+      : [];
+    migrateAllMonthsIncomeUserSet();
+    ensureAppCategories();
+    ensureSpendingJarsNormalized();
+    normalizeAllFixedTemplates();
+    activeMonthKey = null;
+    state = null;
+    try {
+      localStorage.removeItem(STORAGE_V1);
+      localStorage.setItem(STORAGE_V2, JSON.stringify(getAppPayload()));
+    } catch (e) {
+      throw new Error("Không thể ghi dữ liệu vào localStorage.");
+    }
+    applyThemeSettings();
+    lastSyncedPayload = "";
+    refreshAllCategorySelects();
+    renderThemeModeOptions();
+    renderFixedTemplatesList();
+    renderSettingsCategoriesList();
+    renderSettingsNewCategoryIconPicker();
+    renderSettingsJarsList();
+    renderExportMonthPicker();
+    refreshSettingsDefaultLimitDisplay();
+    var nextMonth = exportableMonthKeys()[0] || currentMonthKey();
+    openMonth(nextMonth, { skipUrl: true, sync: false });
+    showSettingsView();
+  }
+
+  async function importDataFile(file) {
+    if (!file) return;
+    setSettingsDataStatus("", "");
+    var text = await file.text();
+    var parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error("File không phải JSON hợp lệ.");
+    }
+    var nextData = readImportBackupData(parsed);
+    if (
+      !confirm(
+        "Import file này sẽ ghi đè toàn bộ dữ liệu tracking và cài đặt app đang lưu trên máy. Tiếp tục?"
+      )
+    ) {
+      return;
+    }
+    replaceAppDataFromImport(nextData);
+    setSettingsDataStatus("Đã import dữ liệu và thay thế dữ liệu local hiện tại.", "ok");
+  }
+
   var URL_PARAM_THANG = "thang";
 
   function readThangFromUrl() {
@@ -1710,6 +1942,12 @@
   var elSettingsAddFixedName = document.getElementById("settings-add-fixed-name");
   var elSettingsAddFixedAmount = document.getElementById("settings-add-fixed-amount");
   var elSettingsAddFixedAmountPreview = document.getElementById("settings-add-fixed-amount-preview");
+  var elSettingsExportMonths = document.getElementById("settings-export-months");
+  var elBtnExportDataToggleAll = document.getElementById("btn-export-data-toggle-all");
+  var elBtnExportData = document.getElementById("btn-export-data");
+  var elBtnImportData = document.getElementById("btn-import-data");
+  var elSettingsImportFile = document.getElementById("settings-import-file");
+  var elSettingsDataStatus = document.getElementById("settings-data-status");
   var elSettingsCategoriesList = document.getElementById("settings-categories-list");
   var elSettingsAddCategoryPanel = document.getElementById("settings-add-category-panel");
   var elBtnSettingsShowAddCategory = document.getElementById("btn-settings-show-add-category");
@@ -4641,6 +4879,7 @@
     if (elViewSettings && !elViewSettings.hidden) {
       renderSettingsCategoriesList();
       renderSettingsJarsList();
+      renderExportMonthPicker();
     }
   }
 
@@ -4663,6 +4902,7 @@
     if (elViewSettings && !elViewSettings.hidden) {
       renderSettingsCategoriesList();
       renderSettingsJarsList();
+      renderExportMonthPicker();
     }
   }
 
@@ -5099,6 +5339,8 @@
     renderSettingsCategoriesList();
     renderSettingsNewCategoryIconPicker();
     renderSettingsJarsList();
+    renderExportMonthPicker();
+    setSettingsDataStatus("", "");
     setSettingsAddJarPanelOpen(false);
     setSettingsAddCategoryPanelOpen(false);
     setSettingsAddFixedPanelOpen(false);
@@ -5144,7 +5386,7 @@
     updateAmountPreview(elAmount, elExpensePreview);
     resetAddExpenseDateInput();
 
-    persistAndRender();
+    persistAndRender(opts.sync === false ? { sync: false } : undefined);
 
     if (!opts.fromPop && !opts.skipUrl) {
       syncUrlToMonth(key);
@@ -5393,6 +5635,45 @@
       applyThemeSettings();
       renderThemeModeOptions();
       saveAppData();
+    });
+  }
+
+  if (elBtnExportDataToggleAll) {
+    elBtnExportDataToggleAll.addEventListener("click", function () {
+      if (!elSettingsExportMonths) return;
+      var inputs = elSettingsExportMonths.querySelectorAll(
+        'input[type="checkbox"][data-month-key]'
+      );
+      var checked = elSettingsExportMonths.querySelectorAll(
+        'input[type="checkbox"][data-month-key]:checked'
+      );
+      var nextChecked = !(inputs.length > 0 && checked.length === inputs.length);
+      var i;
+      for (i = 0; i < inputs.length; i++) {
+        inputs[i].checked = nextChecked;
+      }
+      syncExportToggleAllLabel();
+    });
+  }
+
+  if (elBtnExportData) {
+    elBtnExportData.addEventListener("click", exportSelectedData);
+  }
+
+  if (elBtnImportData && elSettingsImportFile) {
+    elBtnImportData.addEventListener("click", function () {
+      elSettingsImportFile.value = "";
+      elSettingsImportFile.click();
+    });
+    elSettingsImportFile.addEventListener("change", function () {
+      var file = elSettingsImportFile.files && elSettingsImportFile.files[0];
+      if (!file) return;
+      importDataFile(file).catch(function (err) {
+        setSettingsDataStatus(
+          err && err.message ? err.message : "Import dữ liệu thất bại.",
+          "error"
+        );
+      });
     });
   }
 

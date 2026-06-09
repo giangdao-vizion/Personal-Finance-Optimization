@@ -55,6 +55,12 @@
       <path d="M4 14.5A4.5 4.5 0 016.35 6.05 7.5 7.5 0 0119.5 10.5 4.5 4.5 0 0118 18H7.5A4.5 4.5 0 014 14.5z" />
       <path d="M12 5v3M9.5 7.5L12 5l2.5 2.5M12 19v-3M9.5 16.5L12 19l2.5-2.5" />
     </symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
+    </symbol>
+    <symbol id="icon-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 21V9M7 14l5-5 5 5M5 3h14" />
+    </symbol>
     <!-- Piggy bank pictogram (SVG Repo); fill via currentColor on parent svg -->
     <symbol id="icon-piggy-bank" viewBox="0 0 512 512">
       <g fill="currentColor">
@@ -557,6 +563,49 @@
         </form>
       </div>
     </section>
+
+    <details class="card settings-data-card collapsible-card" aria-labelledby="settings-data-heading">
+      <summary class="collapsible-summary">
+        <h2 id="settings-data-heading" class="card-title collapsible-summary-title">Dữ liệu</h2>
+        <span class="collapsible-chevron" aria-hidden="true">
+          <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
+        </span>
+      </summary>
+      <div class="collapsible-panel settings-data-panel">
+        <p class="field-hint settings-hint">Xuất file backup JSON hoặc nhập lại để thay thế dữ liệu đang lưu trên máy.</p>
+
+        <div class="settings-data-block">
+          <div class="settings-data-head">
+            <div>
+              <p class="settings-data-title">Export Data</p>
+              <p class="field-hint settings-data-hint">Chọn tháng có dữ liệu để đưa vào backup. Danh mục, hũ, khoản cố định và cài đặt app luôn được kèm theo.</p>
+            </div>
+            <button type="button" id="btn-export-data-toggle-all" class="btn btn-ghost btn-compact">Tất cả</button>
+          </div>
+          <div id="settings-export-months" class="settings-export-months" role="group" aria-label="Chọn tháng để export"></div>
+          <button type="button" id="btn-export-data" class="btn btn-primary btn-block settings-data-action-btn">
+            <svg class="icon-svg" width="18" height="18" aria-hidden="true"><use href="#icon-download" /></svg>
+            <span>Export Data</span>
+          </button>
+        </div>
+
+        <div class="settings-data-block settings-data-block-import">
+          <div class="settings-data-head">
+            <div>
+              <p class="settings-data-title">Import Data</p>
+              <p class="field-hint settings-data-hint">Nhập file JSON đã export để ghi đè hoàn toàn dữ liệu tracking và cài đặt app trên máy này.</p>
+            </div>
+          </div>
+          <input type="file" id="settings-import-file" accept="application/json,.json" hidden />
+          <button type="button" id="btn-import-data" class="btn btn-ghost btn-block settings-data-action-btn">
+            <svg class="icon-svg" width="18" height="18" aria-hidden="true"><use href="#icon-upload" /></svg>
+            <span>Import Data</span>
+          </button>
+        </div>
+
+        <p id="settings-data-status" class="field-hint settings-data-status" hidden></p>
+      </div>
+    </details>
   </div>
 
   <div id="side-menu" class="side-menu" hidden>
