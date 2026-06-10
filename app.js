@@ -3,6 +3,8 @@
 
   var STORAGE_V1 = "family-budget-v1";
   var STORAGE_V2 = "family-budget-v2";
+  /** Sau import offline: đăng nhập sẽ đẩy local lên cloud thay vì kéo cloud cũ xuống. */
+  var STORAGE_PENDING_CLOUD_PUSH = "family-budget-pending-cloud-push";
   var MENU_MONTH_SPAN = 60;
   var SUPABASE_URL =
     window.SUPABASE_URL || "https://sfngotvwotmlqelkjzpr.supabase.co";
@@ -570,18 +572,31 @@
   var isApplyingCloudSnapshot = false;
   var cloudSyncTimer = null;
   var authStateListenerBound = false;
-  /** Không áp snapshot cloud xuống UI ngay sau khi user vừa sửa (tránh ghi đè khoản mới). */
-  var LOCAL_CLOUD_GUARD_MS = 5000;
-  var lastLocalDataTouchAt = 0;
   var syncInFlight = false;
   var syncPending = false;
+  var cloudPollTimer = null;
+  /** Poll cloud khi Realtime ngắt (hay gặp trên iPhone/PWA). */
+  var CLOUD_POLL_MS = 20000;
 
   function touchLocalData() {
-    lastLocalDataTouchAt = Date.now();
+    /* giữ hook cho telemetry / guard tương lai */
   }
 
-  function shouldDeferCloudDownstreamApply() {
-    return Date.now() - lastLocalDataTouchAt < LOCAL_CLOUD_GUARD_MS;
+  function stopCloudPoll() {
+    if (cloudPollTimer) {
+      clearInterval(cloudPollTimer);
+      cloudPollTimer = null;
+    }
+  }
+
+  function startCloudPoll() {
+    stopCloudPoll();
+    if (!supabaseEnabled) return;
+    cloudPollTimer = setInterval(function () {
+      if (document.visibilityState !== "visible") return;
+      if (isApplyingCloudSnapshot || syncInFlight) return;
+      void pullSupabaseStateAndRender();
+    }, CLOUD_POLL_MS);
   }
 
   function setAuthSyncHint(text, kind) {
@@ -766,7 +781,28 @@
     } catch (e) {}
   }
 
-  async function syncToSupabaseNow() {
+  function markPendingCloudPush() {
+    try {
+      localStorage.setItem(STORAGE_PENDING_CLOUD_PUSH, "1");
+    } catch (e) {}
+  }
+
+  function consumePendingCloudPush() {
+    try {
+      if (localStorage.getItem(STORAGE_PENDING_CLOUD_PUSH) !== "1") return false;
+      localStorage.removeItem(STORAGE_PENDING_CLOUD_PUSH);
+      return true;
+    } catch (e2) {
+      return false;
+    }
+  }
+
+  /**
+   * @param {{ forceLocal?: boolean }} [opts]
+   * forceLocal: ghi đè cloud bằng payload local (sau import backup đầy đủ).
+   */
+  async function syncToSupabaseNow(opts) {
+    opts = opts || {};
     if (!supabaseEnabled || !supabaseClient || isApplyingCloudSnapshot) return;
     if (syncInFlight) {
       syncPending = true;
@@ -776,6 +812,7 @@
     try {
       var mergedPayload;
       var remotePayload = null;
+      var forceLocal = !!opts.forceLocal;
       try {
         var remoteRes = await supabaseClient
           .from(SUPABASE_TABLE)
@@ -785,6 +822,10 @@
         var localPayload = getAppPayloadForSync();
         if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
           remotePayload = remoteRes.data.payload;
+        }
+        if (forceLocal) {
+          mergedPayload = normalizeAppDataShape(localPayload);
+        } else if (remotePayload) {
           mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
         } else {
           mergedPayload = normalizeAppDataShape(localPayload);
@@ -794,7 +835,7 @@
       }
       var mergedSig = wirePayloadSignature(mergedPayload);
       var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
-      if (mergedSig && mergedSig === remoteSig) {
+      if (!forceLocal && mergedSig && mergedSig === remoteSig) {
         lastSyncedPayload = mergedSig;
         return;
       }
@@ -812,7 +853,10 @@
         } catch (e2) {
           lastSyncedPayload = "";
         }
-        setAuthSyncHint("Đã lưu lên cloud.", "ok");
+        setAuthSyncHint(
+          forceLocal ? "Đã ghi đè cloud bằng dữ liệu trên máy này." : "Đã lưu lên cloud.",
+          "ok"
+        );
       } else {
         console.warn("Supabase sync failed:", res.error.message);
         setAuthSyncHint("Không ghi được cloud: " + res.error.message, "error");
@@ -821,7 +865,7 @@
       syncInFlight = false;
       if (syncPending) {
         syncPending = false;
-        void syncToSupabaseNow();
+        void syncToSupabaseNow(opts);
       }
     }
   }
@@ -1005,10 +1049,6 @@
 
   async function pullSupabaseStateAndRender() {
     if (!supabaseClient || !supabaseEnabled) return;
-    if (shouldDeferCloudDownstreamApply()) {
-      await syncToSupabaseNow();
-      return;
-    }
     try {
       var fetchRes = await supabaseClient
         .from(SUPABASE_TABLE)
@@ -1115,10 +1155,6 @@
         },
         function (payload) {
           if (!payload || !payload.new || !payload.new.payload) return;
-          if (shouldDeferCloudDownstreamApply()) {
-            queueSupabaseSync();
-            return;
-          }
           var cloudData = normalizeAppDataShape(payload.new.payload);
           var cloudSig = wirePayloadSignature(cloudData);
           if (cloudSig === lastSyncedPayload) return;
@@ -1132,16 +1168,36 @@
           }
         }
       )
-      .subscribe();
+      .subscribe(function (status, err) {
+        if (status === "SUBSCRIBED") return;
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.warn("Supabase Realtime:", status, err || "");
+          setAuthSyncHint(
+            "Realtime cloud ngắt — vẫn tự kéo cloud mỗi " +
+              Math.round(CLOUD_POLL_MS / 1000) +
+              "s hoặc khi mở lại app.",
+            "error"
+          );
+          setTimeout(function () {
+            if (supabaseEnabled) attachSupabaseRealtime();
+          }, 4000);
+        }
+      });
   }
 
   async function enableSupabaseSyncBySession(session) {
     if (!session || !session.user) return;
     supabaseEnabled = true;
     supabaseUserEmail = session.user.email || "";
-    await pullSupabaseStateAndRender();
+    var pendingPush = consumePendingCloudPush();
+    if (pendingPush) {
+      await syncToSupabaseNow({ forceLocal: true });
+    } else {
+      await pullSupabaseStateAndRender();
+      await syncToSupabaseNow();
+    }
     attachSupabaseRealtime();
-    await syncToSupabaseNow();
+    startCloudPoll();
     renderAuthUi();
   }
 
@@ -1149,6 +1205,7 @@
     supabaseEnabled = false;
     supabaseUserEmail = "";
     lastSyncedPayload = "";
+    stopCloudPoll();
     if (cloudSyncTimer) {
       clearTimeout(cloudSyncTimer);
       cloudSyncTimer = null;
@@ -1156,6 +1213,15 @@
     detachSupabaseChannel();
     setAuthSyncHint("", "");
     renderAuthUi();
+  }
+
+  function resumeCloudSyncFromBackground() {
+    if (!supabaseEnabled || !supabaseClient) return;
+    attachSupabaseRealtime();
+    void (async function () {
+      await syncToSupabaseNow();
+      await pullSupabaseStateAndRender();
+    })();
   }
 
   function createSupabaseClientIfNeeded() {
@@ -1811,7 +1877,29 @@
       return;
     }
     replaceAppDataFromImport(nextData);
-    setSettingsDataStatus("Đã import dữ liệu và thay thế dữ liệu local hiện tại.", "ok");
+    if (supabaseEnabled && supabaseClient) {
+      lastSyncedPayload = "";
+      try {
+        await syncToSupabaseNow({ forceLocal: true });
+        setSettingsDataStatus(
+          "Đã import và ghi đè cloud bằng file backup này.",
+          "ok"
+        );
+      } catch (syncErr) {
+        console.warn("import cloud sync:", syncErr);
+        markPendingCloudPush();
+        setSettingsDataStatus(
+          "Đã import local. Không ghi được cloud — đăng nhập lại hoặc bấm «Đồng bộ cloud».",
+          "error"
+        );
+      }
+    } else {
+      markPendingCloudPush();
+      setSettingsDataStatus(
+        "Đã import local. Đăng nhập cloud — app sẽ tự ghi đè cloud bằng file vừa import.",
+        "ok"
+      );
+    }
   }
 
   var URL_PARAM_THANG = "thang";
@@ -6265,13 +6353,11 @@
         clearTimeout(cloudSyncTimer);
         cloudSyncTimer = null;
       }
-      void (async function () {
-        await syncToSupabaseNow();
-        if (!shouldDeferCloudDownstreamApply()) {
-          await pullSupabaseStateAndRender();
-        }
-      })();
+      resumeCloudSyncFromBackground();
     }
+  });
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) resumeCloudSyncFromBackground();
   });
   window.addEventListener("pagehide", function () {
     if (supabaseEnabled && supabaseClient) {
