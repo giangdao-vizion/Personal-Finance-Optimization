@@ -603,6 +603,19 @@
           </button>
         </div>
 
+        <div class="settings-data-block settings-data-block-danger">
+          <div class="settings-data-head">
+            <div>
+              <p class="settings-data-title">Xóa toàn bộ data</p>
+              <p class="field-hint settings-data-hint">Xóa hết dữ liệu chi tiêu và cài đặt trên máy này (có xác nhận kép). Nên export backup trước.</p>
+            </div>
+          </div>
+          <button type="button" id="btn-delete-all-data" class="btn btn-ghost btn-block settings-data-action-btn settings-data-danger-btn">
+            <svg class="icon-svg" width="18" height="18" aria-hidden="true"><use href="#icon-trash" /></svg>
+            <span>Xóa toàn bộ data</span>
+          </button>
+        </div>
+
         <p id="settings-data-status" class="field-hint settings-data-status" hidden></p>
       </div>
     </details>
@@ -901,6 +914,21 @@
       ></div>
       <div class="modal-actions expense-day-picker-actions">
         <button type="button" id="expense-day-picker-done" class="btn btn-primary btn-block">Xong</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="migration-dialog" class="modal migration-modal" hidden aria-hidden="true">
+    <div class="modal-backdrop migration-modal-backdrop" id="migration-backdrop" tabindex="-1"></div>
+    <div class="modal-panel migration-modal-panel" role="dialog" aria-modal="true" aria-labelledby="migration-dialog-title">
+      <h2 id="migration-dialog-title" class="modal-title">Cập nhật cấu trúc dữ liệu</h2>
+      <p class="field-hint migration-dialog-lead">
+        App đã chuyển sang lưu chi tiêu theo từng ngày để đồng bộ cloud ổn định hơn. Dữ liệu cũ trên máy cần migrate một lần — không xóa khoản chi.
+      </p>
+      <p class="field-hint migration-dialog-hint">Nên export backup JSON trước khi migrate (mục Dữ liệu).</p>
+      <p id="migration-status" class="field-hint migration-status" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="btn-migration-run" class="btn btn-primary btn-block">Migrate data</button>
       </div>
     </div>
   </div>

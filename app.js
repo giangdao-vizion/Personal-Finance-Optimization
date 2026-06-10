@@ -3,8 +3,12 @@
 
   var STORAGE_V1 = "family-budget-v1";
   var STORAGE_V2 = "family-budget-v2";
+  var STORAGE_V3 = "family-budget-v3";
+  var DATA_SCHEMA_VERSION = 3;
   /** Sau import offline: đăng nhập sẽ đẩy local lên cloud thay vì kéo cloud cũ xuống. */
   var STORAGE_PENDING_CLOUD_PUSH = "family-budget-pending-cloud-push";
+  /** Có STORAGE_V2 nhưng chưa có V3 — chặn ghi local cho đến khi migrate. */
+  var migrationPending = false;
   var MENU_MONTH_SPAN = 60;
   var SUPABASE_URL =
     window.SUPABASE_URL || "https://sfngotvwotmlqelkjzpr.supabase.co";
@@ -445,63 +449,350 @@
     return { defaultLimit: ns.defaultLimit };
   }
 
+  function emptyV3AppData() {
+    return {
+      schemaVersion: DATA_SCHEMA_VERSION,
+      dataUpdatedAt: 0,
+      months: {},
+      days: {},
+      fixedTemplates: defaultFixedTemplates(),
+      settings: defaultSettings(),
+      categories: defaultCategories(),
+      spendingJars: [],
+      configDataUpdatedAt: 0,
+      configNeedSync: false,
+    };
+  }
+
+  function normalizeDayShard(raw) {
+    var row = raw && typeof raw === "object" ? raw : {};
+    var expenses = Array.isArray(row.expenses)
+      ? row.expenses.map(normalizeExpenseRow)
+      : [];
+    return {
+      expenses: expenses,
+      dataUpdatedAt:
+        typeof row.dataUpdatedAt === "number" && row.dataUpdatedAt > 0
+          ? Math.round(row.dataUpdatedAt)
+          : 0,
+      needSync: !!row.needSync,
+    };
+  }
+
+  function normalizeMonthMeta(raw, monthKey) {
+    var row = raw && typeof raw === "object" ? raw : {};
+    var out = {
+      income: typeof row.income === "number" ? row.income : 0,
+      incomeUserSet: !!row.incomeUserSet,
+      dataUpdatedAt:
+        typeof row.dataUpdatedAt === "number" && row.dataUpdatedAt > 0
+          ? Math.round(row.dataUpdatedAt)
+          : 0,
+      needSync: !!row.needSync,
+    };
+    if (typeof row.deletedAt === "number" && row.deletedAt > 0) {
+      out.deletedAt = Math.round(row.deletedAt);
+    }
+    migrateMonthIncomeUserSet(out);
+    return out;
+  }
+
+  function normalizeAppDataShape(d) {
+    var src = d && typeof d === "object" ? d : {};
+    if (
+      (src.schemaVersion || 0) < DATA_SCHEMA_VERSION ||
+      !src.days ||
+      typeof src.days !== "object"
+    ) {
+      return migratePayloadV2ToV3(src).data;
+    }
+    var months = {};
+    var monthSrc = src.months && typeof src.months === "object" ? src.months : {};
+    Object.keys(monthSrc).forEach(function (k) {
+      months[k] = normalizeMonthMeta(monthSrc[k], k);
+    });
+    var days = {};
+    var daySrc = src.days && typeof src.days === "object" ? src.days : {};
+    Object.keys(daySrc).forEach(function (k) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return;
+      days[k] = normalizeDayShard(daySrc[k]);
+    });
+    var fixedTemplates;
+    if (Array.isArray(src.fixedTemplates)) {
+      fixedTemplates = src.fixedTemplates.map(normalizeFixedTemplateRow);
+    } else {
+      fixedTemplates = defaultFixedTemplates();
+    }
+    var settings = normalizeSettings(src.settings);
+    var categories;
+    if (Array.isArray(src.categories) && src.categories.length > 0) {
+      categories = src.categories.map(normalizeCategoryRow);
+    } else {
+      categories = defaultCategories();
+    }
+    var spendingJars = (Array.isArray(src.spendingJars) ? src.spendingJars : []).map(
+      normalizeSpendingJarRow
+    );
+    return {
+      schemaVersion: DATA_SCHEMA_VERSION,
+      dataUpdatedAt:
+        typeof src.dataUpdatedAt === "number" && src.dataUpdatedAt > 0
+          ? Math.round(src.dataUpdatedAt)
+          : 0,
+      months: months,
+      days: days,
+      fixedTemplates: fixedTemplates,
+      settings: settings,
+      categories: categories,
+      spendingJars: spendingJars,
+      configDataUpdatedAt:
+        typeof src.configDataUpdatedAt === "number" && src.configDataUpdatedAt > 0
+          ? Math.round(src.configDataUpdatedAt)
+          : 0,
+      configNeedSync: !!src.configNeedSync,
+    };
+  }
+
+  function coercePayloadToV3(payload) {
+    if (!payload || typeof payload !== "object") return emptyV3AppData();
+    if (
+      (payload.schemaVersion || 0) >= DATA_SCHEMA_VERSION &&
+      payload.days &&
+      typeof payload.days === "object"
+    ) {
+      return normalizeAppDataShape(payload);
+    }
+    return migratePayloadV2ToV3(payload).data;
+  }
+
+  function expenseDayKeyFromRow(e) {
+    if (e && typeof e.dateTs === "number" && e.dateTs > 0) {
+      return dayKeyFromTs(Math.round(e.dateTs));
+    }
+    var id = e && typeof e.id === "string" ? e.id : "";
+    var m = /^e-([0-9a-z]+)-/.exec(id);
+    if (m) {
+      var n = parseInt(m[1], 36);
+      if (!isNaN(n) && n > 0) return dayKeyFromTs(n);
+    }
+    return "";
+  }
+
+  function migratePayloadV2ToV3(v2src) {
+    var report = {
+      ok: true,
+      monthCount: 0,
+      dayCount: 0,
+      expenseCount: 0,
+      warnings: [],
+    };
+    var src = v2src && typeof v2src === "object" ? v2src : {};
+    var out = emptyV3AppData();
+    var ts = nowTs();
+    out.dataUpdatedAt =
+      typeof src.dataUpdatedAt === "number" && src.dataUpdatedAt > 0
+        ? Math.round(src.dataUpdatedAt)
+        : ts;
+    out.configDataUpdatedAt = out.dataUpdatedAt;
+    out.configNeedSync = true;
+    if (Array.isArray(src.fixedTemplates)) {
+      out.fixedTemplates = src.fixedTemplates.map(normalizeFixedTemplateRow);
+    }
+    out.settings = normalizeSettings(src.settings);
+    if (Array.isArray(src.categories) && src.categories.length) {
+      out.categories = src.categories.map(normalizeCategoryRow);
+    }
+    out.spendingJars = (Array.isArray(src.spendingJars) ? src.spendingJars : []).map(
+      normalizeSpendingJarRow
+    );
+    var months = src.months && typeof src.months === "object" ? src.months : {};
+    Object.keys(months).forEach(function (monthKey) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(monthKey)) return;
+      var m = months[monthKey] || {};
+      report.monthCount += 1;
+      out.months[monthKey] = normalizeMonthMeta(m, monthKey);
+      out.months[monthKey].dataUpdatedAt = ts;
+      out.months[monthKey].needSync = true;
+      if (isMonthDeleted(m)) return;
+      var expenses = Array.isArray(m.expenses) ? m.expenses : [];
+      expenses.forEach(function (e) {
+        var row = normalizeExpenseRow(e);
+        var dk = expenseDayKeyFromRow(row);
+        if (!dk || dk.indexOf(monthKey + "-") !== 0) {
+          dk = monthKey + "-01";
+          if (!row.dateTs) {
+            report.warnings.push(
+              "Khoản «" + (row.name || row.id) + "» tháng " + monthKey + " gán vào ngày 01."
+            );
+          }
+        }
+        if (!out.days[dk]) {
+          out.days[dk] = { expenses: [], dataUpdatedAt: ts, needSync: true };
+          report.dayCount += 1;
+        }
+        out.days[dk].expenses.push(row);
+        report.expenseCount += 1;
+      });
+    });
+    return { data: normalizeAppDataShape(out), report: report };
+  }
+
+  function needsDataMigration() {
+    try {
+      if (localStorage.getItem(STORAGE_V3)) return false;
+      return !!localStorage.getItem(STORAGE_V2);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function ensureDayShard(dayKey) {
+    if (!app.days) app.days = {};
+    if (!app.days[dayKey]) {
+      app.days[dayKey] = { expenses: [], dataUpdatedAt: 0, needSync: false };
+    }
+    if (!Array.isArray(app.days[dayKey].expenses)) app.days[dayKey].expenses = [];
+    return app.days[dayKey];
+  }
+
+  function markDayDirty(dayKey) {
+    var shard = ensureDayShard(dayKey);
+    shard.dataUpdatedAt = nowTs();
+    shard.needSync = true;
+    bumpDataRevision();
+  }
+
+  function markMonthMetaDirty(monthKey) {
+    var m = ensureMonth(monthKey);
+    m.dataUpdatedAt = nowTs();
+    m.needSync = true;
+    bumpDataRevision();
+  }
+
+  function markConfigDirty() {
+    app.configDataUpdatedAt = nowTs();
+    app.configNeedSync = true;
+    bumpDataRevision();
+  }
+
+  function getMonthExpenses(monthKey) {
+    if (!monthKey || !app.days) return [];
+    var prefix = monthKey + "-";
+    var out = [];
+    Object.keys(app.days).forEach(function (dk) {
+      if (dk.indexOf(prefix) !== 0) return;
+      var shard = app.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses.forEach(function (e) {
+        out.push(e);
+      });
+    });
+    return out;
+  }
+
+  function flushExpensesToDays(monthKey, expenses) {
+    if (!monthKey) return;
+    var prefix = monthKey + "-";
+    Object.keys(app.days || {}).forEach(function (dk) {
+      if (dk.indexOf(prefix) === 0) delete app.days[dk];
+    });
+    var byDay = {};
+    (expenses || []).forEach(function (e) {
+      var row = normalizeExpenseRow(e);
+      var dk = expenseDayKeyFromRow(row);
+      if (!dk || dk.indexOf(prefix) !== 0) dk = monthKey + "-01";
+      if (!byDay[dk]) byDay[dk] = [];
+      byDay[dk].push(row);
+    });
+    Object.keys(byDay).forEach(function (dk) {
+      var shard = ensureDayShard(dk);
+      shard.expenses = byDay[dk];
+      shard.dataUpdatedAt = nowTs();
+      shard.needSync = true;
+    });
+  }
+
+  function buildMonthState(monthKey) {
+    var m = ensureMonth(monthKey);
+    return {
+      income: m.income,
+      incomeUserSet: !!m.incomeUserSet,
+      dataUpdatedAt: m.dataUpdatedAt || 0,
+      needSync: !!m.needSync,
+      deletedAt: m.deletedAt,
+      expenses: getMonthExpenses(monthKey).map(normalizeExpenseRow),
+    };
+  }
+
+  function forEachExpenseInApp(fn) {
+    Object.keys(app.days || {}).forEach(function (dk) {
+      var shard = app.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses.forEach(function (e) {
+        fn(e, dk);
+      });
+    });
+  }
+
+  function clearAllSyncFlagsOnApp() {
+    Object.keys(app.days || {}).forEach(function (dk) {
+      if (app.days[dk]) app.days[dk].needSync = false;
+    });
+    Object.keys(app.months || {}).forEach(function (mk) {
+      if (app.months[mk]) app.months[mk].needSync = false;
+    });
+    app.configNeedSync = false;
+  }
+
+  function spendingConfigSignature(payload) {
+    var n = payload || {};
+    return JSON.stringify({
+      configDataUpdatedAt: n.configDataUpdatedAt || 0,
+      fixedTemplates: n.fixedTemplates || [],
+      categories: n.categories || [],
+      spendingJars: n.spendingJars || [],
+      settings: settingsForCloudStorage(n.settings),
+    });
+  }
+
   /** Chuỗi JSON ổn định để so sánh / lastSynced (không gồm theme). */
   function wirePayloadSignature(payload) {
     var n;
     try {
-      n = normalizeAppDataShape(payload || {});
+      n = coercePayloadToV3(payload || {});
     } catch (e) {
       return "";
     }
+    var daySigs = {};
+    Object.keys(n.days || {}).forEach(function (dk) {
+      var d = n.days[dk];
+      daySigs[dk] = {
+        dataUpdatedAt: d.dataUpdatedAt || 0,
+        expenses: d.expenses || [],
+      };
+    });
+    var monthSigs = {};
+    Object.keys(n.months || {}).forEach(function (mk) {
+      var m = n.months[mk];
+      monthSigs[mk] = {
+        income: m.income,
+        incomeUserSet: !!m.incomeUserSet,
+        deletedAt: m.deletedAt || 0,
+        dataUpdatedAt: m.dataUpdatedAt || 0,
+      };
+    });
     var w = {
-      dataUpdatedAt:
-        typeof n.dataUpdatedAt === "number" && n.dataUpdatedAt > 0
-          ? Math.round(n.dataUpdatedAt)
-          : 0,
-      months: n.months,
-      fixedTemplates: n.fixedTemplates,
-      settings: settingsForCloudStorage(n.settings),
-      categories: n.categories,
-      spendingJars: n.spendingJars,
+      schemaVersion: DATA_SCHEMA_VERSION,
+      dataUpdatedAt: n.dataUpdatedAt || 0,
+      months: monthSigs,
+      days: daySigs,
+      config: spendingConfigSignature(n),
     };
     try {
       return JSON.stringify(w);
     } catch (e2) {
       return "";
     }
-  }
-
-  function normalizeAppDataShape(d) {
-    var src = d && typeof d === "object" ? d : {};
-    var months = src.months && typeof src.months === "object" ? src.months : {};
-    var fixedTemplates;
-    if (Array.isArray(src.fixedTemplates)) {
-      fixedTemplates = src.fixedTemplates.map(normalizeFixedTemplateRow);
-    } else if (src.fixedTemplates === undefined) {
-      fixedTemplates = defaultFixedTemplates();
-    } else {
-      fixedTemplates = [];
-    }
-    var settings = normalizeSettings(src.settings);
-    var categories;
-    if (Array.isArray(src.categories) && src.categories.length > 0) {
-      categories = src.categories;
-    } else {
-      categories = defaultCategories();
-    }
-    var spendingJarsSrc = Array.isArray(src.spendingJars) ? src.spendingJars : [];
-    var spendingJars = spendingJarsSrc.map(normalizeSpendingJarRow);
-    return {
-      dataUpdatedAt:
-        typeof src.dataUpdatedAt === "number" && src.dataUpdatedAt > 0
-          ? Math.round(src.dataUpdatedAt)
-          : 0,
-      months: months,
-      fixedTemplates: fixedTemplates,
-      settings: settings,
-      categories: categories,
-      spendingJars: spendingJars,
-    };
   }
 
   function normalizeFixedTemplateRow(t) {
@@ -522,12 +813,16 @@
   }
 
   function loadAppData() {
+    migrationPending = needsDataMigration();
     try {
-      var raw = localStorage.getItem(STORAGE_V2);
-      if (raw) {
-        return normalizeAppDataShape(JSON.parse(raw));
+      var rawV3 = localStorage.getItem(STORAGE_V3);
+      if (rawV3) {
+        return normalizeAppDataShape(JSON.parse(rawV3));
       }
     } catch (e) {}
+    if (migrationPending) {
+      return emptyV3AppData();
+    }
     var months = {};
     try {
       var v1 = localStorage.getItem(STORAGE_V1);
@@ -551,16 +846,18 @@
               spendingJars: [],
             })
           );
+          migrationPending = needsDataMigration();
+          if (migrationPending) return emptyV3AppData();
         } catch (e3) {}
       }
     } catch (e2) {}
-    return normalizeAppDataShape({
+    return migratePayloadV2ToV3({
       months: months,
       fixedTemplates: defaultFixedTemplates(),
       settings: defaultSettings(),
       categories: defaultCategories(),
       spendingJars: [],
-    });
+    }).data;
   }
 
   var supabaseClient = null;
@@ -653,15 +950,22 @@
 
   function getAppPayload() {
     return {
+      schemaVersion: DATA_SCHEMA_VERSION,
       dataUpdatedAt:
         typeof app.dataUpdatedAt === "number" && app.dataUpdatedAt > 0
           ? Math.round(app.dataUpdatedAt)
           : 0,
       months: app.months,
+      days: app.days,
       fixedTemplates: app.fixedTemplates,
       settings: app.settings,
       categories: app.categories,
       spendingJars: app.spendingJars,
+      configDataUpdatedAt:
+        typeof app.configDataUpdatedAt === "number" && app.configDataUpdatedAt > 0
+          ? Math.round(app.configDataUpdatedAt)
+          : 0,
+      configNeedSync: !!app.configNeedSync,
     };
   }
 
@@ -693,15 +997,14 @@
     return out;
   }
 
-  function mergePayloadForCloud(remotePayload, localPayload) {
-    var remote = normalizeAppDataShape(remotePayload || {});
-    var local = normalizeAppDataShape(localPayload || {});
-    var merged = {
-      dataUpdatedAt: Math.max(
-        remote.dataUpdatedAt || 0,
-        local.dataUpdatedAt || 0
-      ),
-      months: {},
+  function mergeSpendingConfig(remote, local) {
+    var rAt = remote.configDataUpdatedAt || 0;
+    var lAt = local.configDataUpdatedAt || 0;
+    var useLocal =
+      local.configNeedSync && (lAt >= rAt || !remote.configNeedSync);
+    var useRemote = remote.configNeedSync && rAt > lAt;
+    var base = useRemote ? remote : useLocal ? local : lAt >= rAt ? local : remote;
+    return {
       fixedTemplates: mergeRowsById(
         remote.fixedTemplates,
         local.fixedTemplates,
@@ -710,8 +1013,7 @@
         },
         fixedTemplateUpdatedAt
       ),
-      settings: settingsForCloudStorage(local.settings),
-      categories: local.categories,
+      categories: (base.categories || []).map(normalizeCategoryRow),
       spendingJars: mergeRowsById(
         remote.spendingJars || [],
         local.spendingJars || [],
@@ -720,7 +1022,106 @@
         },
         jarUpdatedAt
       ).map(normalizeSpendingJarRow),
+      settings: normalizeSettings(base.settings),
+      configDataUpdatedAt: Math.max(rAt, lAt),
+      configNeedSync: false,
     };
+  }
+
+  function mergeDayShard(remoteShard, localShard) {
+    var r = remoteShard || { expenses: [], dataUpdatedAt: 0, needSync: false };
+    var l = localShard || { expenses: [], dataUpdatedAt: 0, needSync: false };
+    var rAt = r.dataUpdatedAt || 0;
+    var lAt = l.dataUpdatedAt || 0;
+    if (!l.needSync && rAt <= lAt && !r.expenses.length && l.expenses.length) {
+      return { expenses: l.expenses, dataUpdatedAt: lAt, needSync: false };
+    }
+    if (!l.needSync && rAt > lAt) {
+      return {
+        expenses: (r.expenses || []).map(normalizeExpenseRow),
+        dataUpdatedAt: rAt,
+        needSync: false,
+      };
+    }
+    return {
+      expenses: mergeRowsById(
+        r.expenses || [],
+        l.expenses || [],
+        function (e) {
+          return e && e.id;
+        },
+        expenseUpdatedAt
+      ).map(normalizeExpenseRow),
+      dataUpdatedAt: Math.max(rAt, lAt),
+      needSync: false,
+    };
+  }
+
+  function monthHasLiveExpenses(monthKey, dayMap) {
+    var prefix = monthKey + "-";
+    var keys = Object.keys(dayMap || {});
+    var i;
+    for (i = 0; i < keys.length; i++) {
+      var dk = keys[i];
+      if (dk.indexOf(prefix) !== 0) continue;
+      var shard = dayMap[dk];
+      if (
+        shard &&
+        Array.isArray(shard.expenses) &&
+        shard.expenses.some(function (e) {
+          return !isRowDeleted(e);
+        })
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function mergePayloadForCloud(remotePayload, localPayload) {
+    var remote = coercePayloadToV3(remotePayload || {});
+    var local = coercePayloadToV3(localPayload || {});
+    var cfg = mergeSpendingConfig(remote, local);
+    var merged = {
+      schemaVersion: DATA_SCHEMA_VERSION,
+      dataUpdatedAt: Math.max(remote.dataUpdatedAt || 0, local.dataUpdatedAt || 0),
+      months: {},
+      days: {},
+      fixedTemplates: cfg.fixedTemplates,
+      categories: cfg.categories,
+      spendingJars: cfg.spendingJars,
+      settings: cfg.settings,
+      configDataUpdatedAt: cfg.configDataUpdatedAt,
+      configNeedSync: false,
+    };
+    var dayKeys = {};
+    Object.keys(remote.days || {}).forEach(function (k) {
+      dayKeys[k] = true;
+    });
+    Object.keys(local.days || {}).forEach(function (k) {
+      dayKeys[k] = true;
+    });
+    Object.keys(dayKeys).forEach(function (dk) {
+      var rShard = remote.days[dk];
+      var lShard = local.days[dk];
+      if (lShard && lShard.needSync) {
+        merged.days[dk] = mergeDayShard(rShard, lShard);
+        return;
+      }
+      if (rShard && (!lShard || (rShard.dataUpdatedAt || 0) > (lShard.dataUpdatedAt || 0))) {
+        merged.days[dk] = mergeDayShard(rShard, lShard);
+        return;
+      }
+      if (lShard) {
+        merged.days[dk] = normalizeDayShard(lShard);
+        merged.days[dk].needSync = false;
+        return;
+      }
+      if (rShard) {
+        merged.days[dk] = normalizeDayShard(rShard);
+        merged.days[dk].needSync = false;
+      }
+    });
     var monthKeys = {};
     Object.keys(remote.months || {}).forEach(function (k) {
       monthKeys[k] = true;
@@ -737,48 +1138,50 @@
         var localMonthAlive =
           lmDeletedAt <= 0 &&
           ((typeof lm.income === "number" && lm.income > 0) ||
-            (Array.isArray(lm.expenses) &&
-              lm.expenses.some(function (e) {
-                return !isRowDeleted(e);
-              })));
+            monthHasLiveExpenses(k, local.days));
         if (!localMonthAlive) {
-          if (rmDeletedAt >= lmDeletedAt) {
-            merged.months[k] = { deletedAt: rmDeletedAt };
-          } else {
-            merged.months[k] = { deletedAt: lmDeletedAt };
-          }
+          var delAt = rmDeletedAt >= lmDeletedAt ? rmDeletedAt : lmDeletedAt;
+          merged.months[k] = {
+            deletedAt: delAt,
+            income: 0,
+            incomeUserSet: false,
+            dataUpdatedAt: delAt,
+            needSync: false,
+          };
+          var prefix = k + "-";
+          Object.keys(merged.days).forEach(function (dk) {
+            if (dk.indexOf(prefix) === 0) delete merged.days[dk];
+          });
           return;
         }
       }
+      var rAt = rm.dataUpdatedAt || 0;
+      var lAt = lm.dataUpdatedAt || 0;
+      var pickLocal = lm.needSync && lAt >= rAt;
       merged.months[k] = {
-        income:
-          typeof lm.income === "number"
-            ? lm.income
-            : typeof rm.income === "number"
-            ? rm.income
-            : 0,
-        incomeUserSet:
-          lm.incomeUserSet !== undefined
-            ? !!lm.incomeUserSet
-            : rm.incomeUserSet !== undefined
-            ? !!rm.incomeUserSet
-            : false,
-        expenses: mergeRowsById(
-          rm.expenses || [],
-          lm.expenses || [],
-          function (e) {
-            return e && e.id;
-          },
-          expenseUpdatedAt
-        ).map(normalizeExpenseRow),
+        income: pickLocal
+          ? lm.income
+          : typeof rm.income === "number" && rAt > lAt
+          ? rm.income
+          : typeof lm.income === "number"
+          ? lm.income
+          : 0,
+        incomeUserSet: pickLocal
+          ? !!lm.incomeUserSet
+          : rAt > lAt
+          ? !!rm.incomeUserSet
+          : !!lm.incomeUserSet,
+        dataUpdatedAt: Math.max(rAt, lAt),
+        needSync: false,
       };
     });
     return finalizeMergeWithActiveMonthState(merged);
   }
 
   function saveAppDataToLocal() {
+    if (migrationPending) return;
     try {
-      localStorage.setItem(STORAGE_V2, JSON.stringify(getAppPayload()));
+      localStorage.setItem(STORAGE_V3, JSON.stringify(getAppPayload()));
     } catch (e) {}
   }
 
@@ -826,14 +1229,14 @@
           remotePayload = remoteRes.data.payload;
         }
         if (forceLocal) {
-          mergedPayload = normalizeAppDataShape(localPayload);
+          mergedPayload = coercePayloadToV3(localPayload);
         } else if (remotePayload) {
           mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
         } else {
-          mergedPayload = normalizeAppDataShape(localPayload);
+          mergedPayload = coercePayloadToV3(localPayload);
         }
       } catch (eRemote) {
-        mergedPayload = normalizeAppDataShape(getAppPayloadForSync());
+        mergedPayload = coercePayloadToV3(getAppPayloadForSync());
       }
       var mergedSig = wirePayloadSignature(mergedPayload);
       var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
@@ -855,6 +1258,10 @@
         } catch (e2) {
           lastSyncedPayload = "";
         }
+        applyNormalizedAppData(mergedPayload);
+        clearAllSyncFlagsOnApp();
+        saveAppDataToLocal();
+        refreshMonthUiAfterCloudMerge();
         setAuthSyncHint(
           forceLocal ? "Đã ghi đè cloud bằng dữ liệu trên máy này." : "Đã lưu lên cloud.",
           "ok"
@@ -911,6 +1318,8 @@
    */
   function saveAppData(opts) {
     opts = opts || {};
+    if (migrationPending) return;
+    if (opts.configDirty) markConfigDirty();
     persistLocalNow();
     if (opts.sync === false) return;
     queueSupabaseSync(!!opts.immediateSync);
@@ -918,6 +1327,8 @@
 
   async function saveAppDataAsync(opts) {
     opts = opts || {};
+    if (migrationPending) return;
+    if (opts.configDirty) markConfigDirty();
     persistLocalNow();
     if (opts.sync === false) return;
     if (opts.immediateSync) {
@@ -929,6 +1340,10 @@
 
   var app = loadAppData();
   if (typeof app.dataUpdatedAt !== "number") app.dataUpdatedAt = 0;
+  if (!app.days || typeof app.days !== "object") app.days = {};
+  if (!app.months || typeof app.months !== "object") app.months = {};
+  if (typeof app.configDataUpdatedAt !== "number") app.configDataUpdatedAt = 0;
+  if (app.configNeedSync === undefined) app.configNeedSync = false;
   if (!Array.isArray(app.fixedTemplates)) app.fixedTemplates = defaultFixedTemplates();
   if (!app.settings || typeof app.settings !== "object") app.settings = defaultSettings();
   app.settings = normalizeSettings(app.settings);
@@ -981,13 +1396,9 @@
     function add(id) {
       if (id && typeof id === "string") set[id] = true;
     }
-    Object.keys(app.months).forEach(function (k) {
-      var m = app.months[k];
-      if (!m || !Array.isArray(m.expenses)) return;
-      m.expenses.forEach(function (e) {
-        if (isRowDeleted(e)) return;
-        add(e.category);
-      });
+    forEachExpenseInApp(function (e) {
+      if (isRowDeleted(e)) return;
+      add(e.category);
     });
     (app.fixedTemplates || []).forEach(function (t) {
       if (isRowDeleted(t)) return;
@@ -1037,22 +1448,27 @@
   normalizeAllFixedTemplates();
 
   function applyNormalizedAppData(nextData) {
+    var normalized = coercePayloadToV3(nextData);
     var preservedTheme = normalizeThemeMode(
       app && app.settings && app.settings.themeMode ? app.settings.themeMode : "dark"
     );
+    app.schemaVersion = DATA_SCHEMA_VERSION;
     app.dataUpdatedAt =
-      typeof nextData.dataUpdatedAt === "number" && nextData.dataUpdatedAt > 0
-        ? Math.round(nextData.dataUpdatedAt)
+      typeof normalized.dataUpdatedAt === "number" && normalized.dataUpdatedAt > 0
+        ? Math.round(normalized.dataUpdatedAt)
         : 0;
-    app.months = nextData.months;
-    app.fixedTemplates = nextData.fixedTemplates;
-    app.settings = normalizeSettings(nextData.settings);
+    app.months = normalized.months;
+    app.days = normalized.days;
+    app.fixedTemplates = normalized.fixedTemplates;
+    app.settings = normalizeSettings(normalized.settings);
     app.settings.themeMode = preservedTheme;
-    app.categories = nextData.categories;
+    app.categories = normalized.categories;
+    app.configDataUpdatedAt = normalized.configDataUpdatedAt || 0;
+    app.configNeedSync = !!normalized.configNeedSync;
     migrateAllMonthsIncomeUserSet();
     ensureAppCategories();
-    app.spendingJars = Array.isArray(nextData.spendingJars)
-      ? nextData.spendingJars.map(normalizeSpendingJarRow)
+    app.spendingJars = Array.isArray(normalized.spendingJars)
+      ? normalized.spendingJars.map(normalizeSpendingJarRow)
       : [];
     ensureSpendingJarsNormalized();
     normalizeAllFixedTemplates();
@@ -1065,7 +1481,7 @@
     flushActiveMonthIntoApp();
     var m = app.months[activeMonthKey];
     if (!m || isMonthDeleted(m)) return;
-    state = m;
+    state = buildMonthState(activeMonthKey);
   }
 
   async function pullSupabaseStateAndRender() {
@@ -1085,10 +1501,7 @@
         isApplyingCloudSnapshot = true;
         try {
           var localPayload = getAppPayloadForSync();
-          var merged = mergePayloadForCloud(
-            normalizeAppDataShape(fetchRes.data.payload),
-            localPayload
-          );
+          var merged = mergePayloadForCloud(fetchRes.data.payload, localPayload);
           applyCloudMergedPayload(merged);
           setAuthSyncHint("Đã gộp dữ liệu máy + cloud.", "ok");
         } finally {
@@ -1132,7 +1545,7 @@
       if (fetchRes.data && fetchRes.data.payload) {
         merged = mergePayloadForCloud(fetchRes.data.payload, localPayload);
       } else {
-        merged = normalizeAppDataShape(localPayload);
+        merged = coercePayloadToV3(localPayload);
       }
       merged = mergePinnedActiveMonth(merged, activeMonthPin);
       isApplyingCloudSnapshot = true;
@@ -1176,7 +1589,7 @@
         function (payload) {
           if (!payload || !payload.new) return;
           if (payload.new.id !== SUPABASE_STATE_ID || !payload.new.payload) return;
-          var cloudData = normalizeAppDataShape(payload.new.payload);
+          var cloudData = coercePayloadToV3(payload.new.payload);
           var cloudSig = wirePayloadSignature(cloudData);
           if (cloudSig === lastSyncedPayload) return;
           isApplyingCloudSnapshot = true;
@@ -1507,13 +1920,14 @@
     dedupeJarCategoriesExclusive();
   }
 
-  function computeJarSpentForMonth(month, jar) {
-    if (!month || !Array.isArray(month.expenses) || !jar) return 0;
+  function computeJarSpentForMonth(monthKey, jar) {
+    if (!monthKey || !jar) return 0;
+    var expenses = getMonthExpenses(monthKey);
     var set = {};
     (jar.categoryIds || []).forEach(function (id) {
       set[id] = true;
     });
-    return month.expenses.reduce(function (s, e) {
+    return expenses.reduce(function (s, e) {
       if (isRowDeleted(e)) return s;
       if (set[e.category]) return s + e.amount;
       return s;
@@ -1539,13 +1953,14 @@
     return out;
   }
 
-  function computeSpentForCategories(month, categoryIds) {
-    if (!month || !Array.isArray(month.expenses) || !categoryIds.length) return 0;
+  function computeSpentForCategories(monthKey, categoryIds) {
+    if (!monthKey || !categoryIds.length) return 0;
+    var expenses = getMonthExpenses(monthKey);
     var set = {};
     categoryIds.forEach(function (id) {
       set[id] = true;
     });
-    return month.expenses.reduce(function (s, e) {
+    return expenses.reduce(function (s, e) {
       if (isRowDeleted(e)) return s;
       if (set[e.category]) return s + e.amount;
       return s;
@@ -1553,12 +1968,12 @@
   }
 
   function reassignCategoryEverywhere(fromId, toId) {
-    Object.keys(app.months).forEach(function (k) {
-      var m = app.months[k];
-      if (!m || !Array.isArray(m.expenses)) return;
-      m.expenses.forEach(function (e) {
-        if (e.category === fromId) e.category = toId;
-      });
+    forEachExpenseInApp(function (e, dk) {
+      if (e.category === fromId) {
+        e.category = toId;
+        e.updatedAt = nowTs();
+        markDayDirty(dk);
+      }
     });
     (app.fixedTemplates || []).forEach(function (t) {
       if (t.category === fromId) t.category = toId;
@@ -1591,30 +2006,39 @@
     if (!app.months[k]) {
       app.months[k] = {
         income: 0,
-        expenses: [],
         incomeUserSet: false,
+        dataUpdatedAt: 0,
+        needSync: false,
       };
     }
     if (isMonthDeleted(app.months[k])) {
       app.months[k].deletedAt = 0;
       app.months[k].income = 0;
-      app.months[k].expenses = [];
       app.months[k].incomeUserSet = false;
+      app.months[k].dataUpdatedAt = 0;
+      app.months[k].needSync = false;
     }
-    if (!Array.isArray(app.months[k].expenses)) app.months[k].expenses = [];
     if (typeof app.months[k].income !== "number") app.months[k].income = 0;
+    if (app.months[k].dataUpdatedAt === undefined) app.months[k].dataUpdatedAt = 0;
+    if (app.months[k].needSync === undefined) app.months[k].needSync = false;
     migrateMonthIncomeUserSet(app.months[k]);
     return app.months[k];
   }
 
   /**
-   * Sau khi gộp cloud, `state` đôi khi vẫn trỏ object tháng cũ (đã tách khỏi `app.months`).
-   * Gộp các chỉnh sửa trên `state` vào bucket chính trước khi đọc/ghi payload.
+   * Gộp `state` (tháng đang mở) vào `app.months` + `app.days` trước khi lưu/sync.
    */
   function flushActiveMonthIntoApp() {
     if (!activeMonthKey || !state) return;
-    app.months[activeMonthKey] = state;
-    state = ensureMonth(activeMonthKey);
+    var m = ensureMonth(activeMonthKey);
+    m.income = typeof state.income === "number" ? state.income : 0;
+    m.incomeUserSet = !!state.incomeUserSet;
+    if (state.expenses) {
+      flushExpensesToDays(activeMonthKey, state.expenses);
+    }
+    if (state.deletedAt) m.deletedAt = state.deletedAt;
+    markMonthMetaDirty(activeMonthKey);
+    state = buildMonthState(activeMonthKey);
   }
 
   function getAppPayloadForSync() {
@@ -1622,9 +2046,8 @@
     return getAppPayload();
   }
 
-  function totalExpensesForMonth(m) {
-    if (!m || !m.expenses) return 0;
-    return m.expenses.reduce(function (s, e) {
+  function totalExpensesForMonthKey(monthKey) {
+    return getMonthExpenses(monthKey).reduce(function (s, e) {
       if (isRowDeleted(e)) return s;
       return s + (typeof e.amount === "number" ? e.amount : 0);
     }, 0);
@@ -1635,14 +2058,9 @@
     if (!m) return false;
     if (isMonthDeleted(m)) return false;
     if ((m.income || 0) > 0) return true;
-    if (
-      m.expenses &&
-      m.expenses.some(function (e) {
-        return !isRowDeleted(e);
-      })
-    )
-      return true;
-    return false;
+    return getMonthExpenses(k).some(function (e) {
+      return !isRowDeleted(e);
+    });
   }
 
   function formatMonthKeyVi(key) {
@@ -1756,11 +2174,9 @@
       var meta = document.createElement("span");
       meta.className = "settings-export-month-meta";
       var month = app.months[key] || {};
-      var liveExpenseCount = Array.isArray(month.expenses)
-        ? month.expenses.filter(function (e) {
-            return !isRowDeleted(e);
-          }).length
-        : 0;
+      var liveExpenseCount = getMonthExpenses(key).filter(function (e) {
+        return !isRowDeleted(e);
+      }).length;
       meta.textContent =
         liveExpenseCount +
         " khoản" +
@@ -1781,18 +2197,26 @@
       keySet[k] = true;
     });
     var months = {};
+    var days = {};
     Object.keys(app.months || {}).forEach(function (k) {
       if (keySet[k] && app.months[k] && !isMonthDeleted(app.months[k])) {
         months[k] = app.months[k];
       }
     });
+    Object.keys(app.days || {}).forEach(function (dk) {
+      var mk = dk.slice(0, 7);
+      if (keySet[mk] && app.days[dk]) {
+        days[dk] = app.days[dk];
+      }
+    });
     var data = getAppPayload();
     data.months = months;
+    data.days = days;
     return {
       app: "Personal Finance Optimization",
       type: "family-budget-backup",
-      version: 2,
-      storageKey: STORAGE_V2,
+      version: DATA_SCHEMA_VERSION,
+      storageKey: STORAGE_V3,
       exportedAt: new Date().toISOString(),
       data: data,
     };
@@ -1836,35 +2260,31 @@
     if (!data.months || typeof data.months !== "object") {
       throw new Error("File không có dữ liệu tháng hợp lệ.");
     }
-    return normalizeAppDataShape(data);
+    return coercePayloadToV3(data);
   }
 
   function replaceAppDataFromImport(nextData) {
+    var normalized = coercePayloadToV3(nextData);
     var importedTheme = normalizeThemeMode(
-      nextData && nextData.settings && nextData.settings.themeMode
+      normalized && normalized.settings && normalized.settings.themeMode
     );
+    migrationPending = false;
+    applyNormalizedAppData(normalized);
     app.dataUpdatedAt = nowTs();
-    app.months = nextData.months || {};
-    app.fixedTemplates = Array.isArray(nextData.fixedTemplates)
-      ? nextData.fixedTemplates
-      : defaultFixedTemplates();
-    app.settings = normalizeSettings(nextData.settings);
+    app.configDataUpdatedAt = nowTs();
+    app.configNeedSync = true;
+    Object.keys(app.days || {}).forEach(function (dk) {
+      markDayDirty(dk);
+    });
+    Object.keys(app.months || {}).forEach(function (mk) {
+      markMonthMetaDirty(mk);
+    });
     app.settings.themeMode = importedTheme;
-    app.categories = Array.isArray(nextData.categories) && nextData.categories.length
-      ? nextData.categories
-      : defaultCategories();
-    app.spendingJars = Array.isArray(nextData.spendingJars)
-      ? nextData.spendingJars.map(normalizeSpendingJarRow)
-      : [];
-    migrateAllMonthsIncomeUserSet();
-    ensureAppCategories();
-    ensureSpendingJarsNormalized();
-    normalizeAllFixedTemplates();
     activeMonthKey = null;
     state = null;
     try {
       localStorage.removeItem(STORAGE_V1);
-      localStorage.setItem(STORAGE_V2, JSON.stringify(getAppPayload()));
+      localStorage.setItem(STORAGE_V3, JSON.stringify(getAppPayload()));
     } catch (e) {
       throw new Error("Không thể ghi dữ liệu vào localStorage.");
     }
@@ -1881,6 +2301,137 @@
     var nextMonth = exportableMonthKeys()[0] || currentMonthKey();
     openMonth(nextMonth, { skipUrl: true, sync: false });
     showSettingsView();
+  }
+
+  function runDataMigration() {
+    var result = { ok: false, message: "", report: null, warnings: [] };
+    try {
+      var raw = localStorage.getItem(STORAGE_V2);
+      if (!raw) {
+        throw new Error("Không tìm thấy dữ liệu cũ (family-budget-v2) trên máy.");
+      }
+      var parsed = JSON.parse(raw);
+      var migrated = migratePayloadV2ToV3(parsed);
+      localStorage.setItem(STORAGE_V3, JSON.stringify(migrated.data));
+      migrationPending = false;
+      applyNormalizedAppData(migrated.data);
+      migrateAllMonthsIncomeUserSet();
+      ensureAppCategories();
+      ensureSpendingJarsNormalized();
+      normalizeAllFixedTemplates();
+      applyThemeSettings();
+      result.ok = true;
+      result.report = migrated.report;
+      result.warnings = migrated.report.warnings || [];
+      result.message =
+        "Đã chuyển " +
+        migrated.report.expenseCount +
+        " khoản chi → " +
+        migrated.report.dayCount +
+        " ngày, " +
+        migrated.report.monthCount +
+        " tháng.";
+    } catch (e) {
+      result.message = e && e.message ? e.message : "Migrate thất bại.";
+    }
+    return result;
+  }
+
+  function setMigrationModalStatus(text, kind) {
+    if (!elMigrationStatus) return;
+    if (!text) {
+      elMigrationStatus.textContent = "";
+      elMigrationStatus.hidden = true;
+      elMigrationStatus.classList.remove("is-error", "is-ok");
+      return;
+    }
+    elMigrationStatus.textContent = text;
+    elMigrationStatus.hidden = false;
+    elMigrationStatus.classList.toggle("is-error", kind === "error");
+    elMigrationStatus.classList.toggle("is-ok", kind === "ok");
+  }
+
+  function showMigrationModal() {
+    if (!elMigrationDialog) return;
+    document.body.classList.add("migration-blocking");
+    elMigrationDialog.hidden = false;
+    elMigrationDialog.setAttribute("aria-hidden", "false");
+    setMigrationModalStatus(
+      "App đã đổi cấu trúc lưu trữ (theo ngày). Bấm «Migrate data» để chuyển dữ liệu cũ — không mất khoản chi.",
+      ""
+    );
+  }
+
+  function hideMigrationModal() {
+    if (!elMigrationDialog) return;
+    elMigrationDialog.hidden = true;
+    elMigrationDialog.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("migration-blocking");
+    setMigrationModalStatus("", "");
+  }
+
+  function finishAppBootstrap(initialKey) {
+    renderAuthUi();
+    openMonth(initialKey, { skipUrl: true });
+    initSupabaseSync(initialKey);
+  }
+
+  async function wipeAllAppData() {
+    if (
+      !confirm(
+        "Xóa TOÀN BỘ dữ liệu chi tiêu, hạn mức, danh mục, hũ và khoản cố định trên máy này?\n\nHành động không thể hoàn tác. Nên export backup trước."
+      )
+    ) {
+      return;
+    }
+    if (!confirm("Xác nhận lần cuối: bạn chắc chắn muốn xóa hết dữ liệu?")) {
+      return;
+    }
+    migrationPending = false;
+    var preservedTheme = normalizeThemeMode(
+      app && app.settings && app.settings.themeMode ? app.settings.themeMode : "dark"
+    );
+    var empty = emptyV3AppData();
+    empty.settings.themeMode = preservedTheme;
+    applyNormalizedAppData(empty);
+    app.configDataUpdatedAt = nowTs();
+    app.configNeedSync = true;
+    activeMonthKey = null;
+    state = null;
+    lastSyncedPayload = "";
+    try {
+      localStorage.removeItem(STORAGE_V1);
+      localStorage.removeItem(STORAGE_V2);
+      localStorage.setItem(STORAGE_V3, JSON.stringify(getAppPayload()));
+      localStorage.removeItem(STORAGE_PENDING_CLOUD_PUSH);
+    } catch (e) {
+      setSettingsDataStatus("Không xóa được dữ liệu local.", "error");
+      return;
+    }
+    applyThemeSettings();
+    refreshAllCategorySelects();
+    renderThemeModeOptions();
+    renderFixedTemplatesList();
+    renderSettingsCategoriesList();
+    renderSettingsJarsList();
+    renderExportMonthPicker();
+    refreshSettingsDefaultLimitDisplay();
+    openMonth(currentMonthKey(), { skipUrl: true, sync: false });
+    if (supabaseEnabled && supabaseClient) {
+      try {
+        await syncToSupabaseNow({ forceLocal: true });
+        setSettingsDataStatus("Đã xóa toàn bộ dữ liệu trên máy và cloud.", "ok");
+      } catch (syncErr) {
+        console.warn("wipe cloud:", syncErr);
+        setSettingsDataStatus(
+          "Đã xóa local. Không ghi được cloud — bấm «Đồng bộ cloud» khi có mạng.",
+          "error"
+        );
+      }
+    } else {
+      setSettingsDataStatus("Đã xóa toàn bộ dữ liệu trên máy này.", "ok");
+    }
+    renderAllViews();
   }
 
   async function importDataFile(file) {
@@ -2070,6 +2621,11 @@
   var elBtnImportData = document.getElementById("btn-import-data");
   var elSettingsImportFile = document.getElementById("settings-import-file");
   var elSettingsDataStatus = document.getElementById("settings-data-status");
+  var elBtnDeleteAllData = document.getElementById("btn-delete-all-data");
+  var elMigrationDialog = document.getElementById("migration-dialog");
+  var elMigrationBackdrop = document.getElementById("migration-backdrop");
+  var elBtnMigrationRun = document.getElementById("btn-migration-run");
+  var elMigrationStatus = document.getElementById("migration-status");
   var elSettingsCategoriesList = document.getElementById("settings-categories-list");
   var elSettingsAddCategoryPanel = document.getElementById("settings-add-category-panel");
   var elBtnSettingsShowAddCategory = document.getElementById("btn-settings-show-add-category");
@@ -2525,12 +3081,12 @@
   }
 
   function afterFixedTemplatesReordered() {
-    saveAppData();
+    saveAppData({ configDirty: true });
     renderFixedTemplatesList();
   }
 
   function afterCategoriesReordered() {
-    saveAppData();
+    saveAppData({ configDirty: true });
     renderSettingsCategoriesList();
     renderNewJarCategoryCheckboxes();
     refreshAllCategorySelects();
@@ -2546,7 +3102,7 @@
   }
 
   function afterJarsReordered() {
-    saveAppData();
+    saveAppData({ configDirty: true });
     renderSettingsJarsList();
     if (activeMonthKey && state) persistAndRender();
   }
@@ -2976,7 +3532,7 @@
         label: j.label,
         color: j.color,
         limitAmount: j.limitAmount,
-        spent: computeJarSpentForMonth(state, j),
+        spent: computeJarSpentForMonth(activeMonthKey, j),
         categoryIds: j.categoryIds || [],
         extraClass: "",
       };
@@ -2987,7 +3543,7 @@
         label: CONSOLIDATED_JAR_LABEL,
         color: CONSOLIDATED_JAR_COLOR,
         limitAmount: 0,
-        spent: computeSpentForCategories(state, unclaimedIds),
+        spent: computeSpentForCategories(activeMonthKey, unclaimedIds),
         categoryIds: unclaimedIds,
         extraClass: "report-jar-item-consolidated",
       });
@@ -3070,7 +3626,7 @@
     app.settings.defaultLimit = parseMoneyToVND(elSettingsDefaultLimit.value);
     elSettingsDefaultLimit.value = formatAsNganDisplay(app.settings.defaultLimit);
     updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
-    saveAppData();
+    saveAppData({ configDirty: true });
     refreshSettingsDefaultLimitDisplay();
     closeSettingsDefaultLimitEdit();
   }
@@ -3136,7 +3692,7 @@
     j.categoryIds = catIds;
     j.updatedAt = nowTs();
     dedupeJarCategoriesExclusive();
-    saveAppData();
+    saveAppData({ configDirty: true });
     closeEditJarDialog();
     renderSettingsJarsList();
     renderNewJarCategoryCheckboxes();
@@ -3156,7 +3712,7 @@
     });
     if (next.length === app.spendingJars.length) return false;
     app.spendingJars = next;
-    saveAppData();
+    saveAppData({ configDirty: true });
     renderSettingsJarsList();
     renderNewJarCategoryCheckboxes();
     if (activeMonthKey && state) persistAndRender();
@@ -3270,7 +3826,7 @@
     reassignCategoryEverywhere(id, toId);
     remapCategoryInJars(id, toId);
     app.categories = rest;
-    saveAppData();
+    saveAppData({ configDirty: true });
     refreshAllCategorySelects();
     renderSettingsCategoriesList();
     if (activeMonthKey && state) {
@@ -3341,7 +3897,7 @@
       editingCategoryId,
       readCategoryJarPickerValue(elEditCategoryJar, elEditCategoryJarPicker)
     );
-    saveAppData();
+    saveAppData({ configDirty: true });
     closeEditCategoryDialog();
     renderSettingsCategoriesList();
     renderSettingsJarsList();
@@ -3423,8 +3979,9 @@
 
   function mergePinnedActiveMonth(payload, pin) {
     if (!pin || !pin.key) return payload;
-    var out = normalizeAppDataShape(payload || {});
+    var out = coercePayloadToV3(payload || {});
     var cur = out.months[pin.key] || {};
+    var ts = nowTs();
     out.months[pin.key] = {
       income:
         typeof pin.income === "number"
@@ -3438,15 +3995,36 @@
           : cur.incomeUserSet !== undefined
           ? !!cur.incomeUserSet
           : false,
-      expenses: mergeRowsById(
-        cur.expenses || [],
-        pin.expenses || [],
-        function (e) {
-          return e && e.id;
-        },
-        expenseUpdatedAt
-      ).map(normalizeExpenseRow),
+      dataUpdatedAt: ts,
+      needSync: true,
     };
+    var prefix = pin.key + "-";
+    var byDay = {};
+    (pin.expenses || []).forEach(function (e) {
+      var row = normalizeExpenseRow(e);
+      var dk = expenseDayKeyFromRow(row);
+      if (!dk || dk.indexOf(prefix) !== 0) dk = pin.key + "-01";
+      if (!byDay[dk]) byDay[dk] = [];
+      byDay[dk].push(row);
+    });
+    Object.keys(out.days || {}).forEach(function (dk) {
+      if (dk.indexOf(prefix) === 0) delete out.days[dk];
+    });
+    Object.keys(byDay).forEach(function (dk) {
+      var remoteShard = payload && payload.days ? payload.days[dk] : null;
+      out.days[dk] = {
+        expenses: mergeRowsById(
+          remoteShard && remoteShard.expenses ? remoteShard.expenses : [],
+          byDay[dk],
+          function (ex) {
+            return ex && ex.id;
+          },
+          expenseUpdatedAt
+        ).map(normalizeExpenseRow),
+        dataUpdatedAt: ts,
+        needSync: true,
+      };
+    });
     return out;
   }
 
@@ -3506,21 +4084,16 @@
 
   function syncExpenseRowsFromTemplate(t) {
     if (!t || !t.id) return;
-    Object.keys(app.months).forEach(function (k) {
-      var m = app.months[k];
-      if (!m || !Array.isArray(m.expenses)) return;
-      m.expenses.forEach(function (e) {
-        if (isRowDeleted(e)) return;
-        if (e.templateId === t.id) {
-          e.category = t.category;
-          e.name = typeof t.name === "string" ? t.name.trim() : "";
-          e.amount =
-            typeof t.amount === "number" && t.amount >= 0
-              ? Math.round(t.amount)
-              : 0;
-          e.updatedAt = nowTs();
-        }
-      });
+    forEachExpenseInApp(function (e, dk) {
+      if (isRowDeleted(e)) return;
+      if (e.templateId === t.id) {
+        e.category = t.category;
+        e.name = typeof t.name === "string" ? t.name.trim() : "";
+        e.amount =
+          typeof t.amount === "number" && t.amount >= 0 ? Math.round(t.amount) : 0;
+        e.updatedAt = nowTs();
+        markDayDirty(dk);
+      }
     });
   }
 
@@ -3793,7 +4366,7 @@
 
     var segments = [];
     jars.forEach(function (j) {
-      var spent = computeJarSpentForMonth(state, j);
+      var spent = computeJarSpentForMonth(activeMonthKey, j);
       if (spent > 0) {
         segments.push({
           id: j.id,
@@ -3804,7 +4377,7 @@
       }
     });
     if (unclaimed.length) {
-      var cSpent = computeSpentForCategories(state, unclaimed);
+      var cSpent = computeSpentForCategories(activeMonthKey, unclaimed);
       if (cSpent > 0) {
         segments.push({
           id: CONSOLIDATED_JAR_ID,
@@ -4272,7 +4845,7 @@
     var delTs = nowTs();
     t.deletedAt = delTs;
     t.updatedAt = delTs;
-    saveAppData({ immediateSync: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     renderFixedTemplatesList();
   }
 
@@ -4697,17 +5270,13 @@
     if (!categoryId || !categoryIdExists(categoryId)) return [];
     var cutoff = nowTs() - EXPENSE_NAME_SUGGEST_MS;
     var counts = {};
-    Object.keys(app.months).forEach(function (monthKey) {
-      var month = app.months[monthKey];
-      if (!month || isMonthDeleted(month) || !Array.isArray(month.expenses)) return;
-      month.expenses.forEach(function (e) {
-        if (isRowDeleted(e)) return;
-        if (e.category !== categoryId) return;
-        if (expenseDateTs(e) < cutoff) return;
-        var name = typeof e.name === "string" ? e.name.trim() : "";
-        if (!name) return;
-        counts[name] = (counts[name] || 0) + 1;
-      });
+    forEachExpenseInApp(function (e) {
+      if (isRowDeleted(e)) return;
+      if (e.category !== categoryId) return;
+      if (expenseDateTs(e) < cutoff) return;
+      var name = typeof e.name === "string" ? e.name.trim() : "";
+      if (!name) return;
+      counts[name] = (counts[name] || 0) + 1;
     });
     return Object.keys(counts)
       .map(function (name) {
@@ -5173,11 +5742,17 @@
     if (!confirm("Xóa toàn bộ dữ liệu tháng này? Hành động này không thể hoàn tác.")) {
       return;
     }
+    var delTs = nowTs();
+    var prefix = key + "-";
+    Object.keys(app.days || {}).forEach(function (dk) {
+      if (dk.indexOf(prefix) === 0) delete app.days[dk];
+    });
     app.months[key] = {
-      deletedAt: nowTs(),
+      deletedAt: delTs,
       income: 0,
-      expenses: [],
       incomeUserSet: false,
+      dataUpdatedAt: delTs,
+      needSync: true,
     };
     if (activeMonthKey === key) {
       openMonth(currentMonthKey(), { skipUrl: true });
@@ -5265,7 +5840,7 @@
     allMenuMonthKeys().forEach(function (k) {
       var has = monthHasData(k);
       var m = app.months[k];
-      var spent = m ? totalExpensesForMonth(m) : 0;
+      var spent = m ? totalExpensesForMonthKey(k) : 0;
       var inc = m ? m.income || 0 : 0;
       var bal = inc - spent;
 
@@ -5498,8 +6073,9 @@
     opts = opts || {};
     cancelLimitEdit();
     flushIncomeFromField();
+    if (activeMonthKey && state) flushActiveMonthIntoApp();
     ensureMonth(key);
-    state = app.months[key];
+    state = buildMonthState(key);
     state.expenses = state.expenses.map(normalizeExpenseRow);
     if (!state.incomeUserSet) {
       state.income = getDefaultMonthlyLimit();
@@ -5817,6 +6393,46 @@
     });
   }
 
+  if (elBtnDeleteAllData) {
+    elBtnDeleteAllData.addEventListener("click", function () {
+      void wipeAllAppData();
+    });
+  }
+
+  if (elBtnMigrationRun) {
+    elBtnMigrationRun.addEventListener("click", function () {
+      elBtnMigrationRun.disabled = true;
+      setMigrationModalStatus("Đang chuyển dữ liệu...", "");
+      setTimeout(function () {
+        var res = runDataMigration();
+        if (res.ok) {
+          var msg = res.message;
+          if (res.warnings && res.warnings.length) {
+            msg += " Cảnh báo: " + res.warnings.slice(0, 3).join(" ");
+            if (res.warnings.length > 3) msg += " (+" + (res.warnings.length - 3) + " nữa)";
+          }
+          setMigrationModalStatus(msg, "ok");
+          hideMigrationModal();
+          var bootKey = currentMonthKey();
+          finishAppBootstrap(bootKey);
+          renderExportMonthPicker();
+          renderAllViews();
+          if (supabaseEnabled && supabaseClient) {
+            void syncToSupabaseNow({ forceLocal: true });
+          }
+        } else {
+          setMigrationModalStatus(res.message, "error");
+          elBtnMigrationRun.disabled = false;
+        }
+      }, 0);
+    });
+  }
+  if (elMigrationBackdrop) {
+    elMigrationBackdrop.addEventListener("click", function (ev) {
+      ev.preventDefault();
+    });
+  }
+
   if (elSettingsAddCategoryForm) {
     elSettingsAddCategoryForm.addEventListener("submit", function (ev) {
       ev.preventDefault();
@@ -5833,7 +6449,7 @@
         newCat.id,
         readCategoryJarPickerValue(elSettingsNewCategoryJar, elSettingsNewCategoryJarPicker)
       );
-      saveAppData();
+      saveAppData({ configDirty: true });
       renderSettingsCategoriesList();
       renderSettingsJarsList();
       renderNewJarCategoryCheckboxes();
@@ -5874,7 +6490,7 @@
           updatedAt: nowTs(),
         })
       );
-      saveAppData();
+      saveAppData({ configDirty: true });
       renderSettingsJarsList();
       setSettingsAddJarPanelOpen(false);
       if (activeMonthKey && state) persistAndRender();
@@ -5971,7 +6587,7 @@
       amount: amount,
       updatedAt: nowTs(),
     });
-    saveAppData();
+    saveAppData({ configDirty: true });
     if (state) syncFixedIntoMonth(state, activeMonthKey);
     renderFixedTemplatesList();
     if (activeMonthKey && state) persistAndRender();
@@ -6121,8 +6737,8 @@
     syncExpenseRowsFromTemplate(t);
     closeEditFixedTemplateDialog();
     renderFixedTemplatesList();
-    if (activeMonthKey && state) persistAndRender({ immediateSync: true });
-    else saveAppData({ immediateSync: true });
+    if (activeMonthKey && state) persistAndRender({ immediateSync: true, configDirty: true });
+    else saveAppData({ immediateSync: true, configDirty: true });
   }
 
   function saveEditExpenseDialog() {
@@ -6376,9 +6992,11 @@
     } catch (e4) {}
   }
 
-  renderAuthUi();
-  openMonth(initialKey, { skipUrl: true });
-  initSupabaseSync(initialKey);
+  if (migrationPending) {
+    showMigrationModal();
+  } else {
+    finishAppBootstrap(initialKey);
+  }
 
   document.addEventListener("visibilitychange", function () {
     if (!supabaseEnabled || !supabaseClient) return;
