@@ -2200,13 +2200,13 @@
     var days = {};
     Object.keys(app.months || {}).forEach(function (k) {
       if (keySet[k] && app.months[k] && !isMonthDeleted(app.months[k])) {
-        months[k] = app.months[k];
+        months[k] = normalizeMonthMeta(app.months[k], k);
       }
     });
     Object.keys(app.days || {}).forEach(function (dk) {
       var mk = dk.slice(0, 7);
       if (keySet[mk] && app.days[dk]) {
-        days[dk] = app.days[dk];
+        days[dk] = normalizeDayShard(app.days[dk]);
       }
     });
     var data = getAppPayload();
@@ -2247,20 +2247,87 @@
     var payload = buildBackupPayload(selected);
     var datePart = new Date().toISOString().slice(0, 10);
     downloadJsonFile("chi-tieu-tracker-backup-" + datePart + ".json", payload);
+    var dayCount = Object.keys(payload.data.days || {}).length;
+    var expenseCount = 0;
+    Object.keys(payload.data.days || {}).forEach(function (dk) {
+      var shard = payload.data.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      expenseCount += shard.expenses.filter(function (e) {
+        return !isRowDeleted(e);
+      }).length;
+    });
     setSettingsDataStatus(
-      "Đã tạo file backup gồm " + selected.length + " tháng và toàn bộ cài đặt app.",
+      "Đã export v3: " +
+        selected.length +
+        " tháng, " +
+        dayCount +
+        " ngày, " +
+        expenseCount +
+        " khoản + toàn bộ cài đặt.",
       "ok"
     );
+  }
+
+  function detectBackupFormat(data, wrapper) {
+    var w = wrapper && typeof wrapper === "object" ? wrapper : {};
+    var d = data && typeof data === "object" ? data : {};
+    var wrapperVer =
+      typeof w.version === "number" && w.version > 0 ? Math.round(w.version) : 0;
+    var schemaVer =
+      typeof d.schemaVersion === "number" && d.schemaVersion > 0
+        ? Math.round(d.schemaVersion)
+        : 0;
+    var hasDays = d.days && typeof d.days === "object";
+    var hasMonthExpenses = false;
+    Object.keys(d.months || {}).forEach(function (mk) {
+      var m = d.months[mk];
+      if (m && Array.isArray(m.expenses) && m.expenses.length) hasMonthExpenses = true;
+    });
+    if ((schemaVer >= DATA_SCHEMA_VERSION || wrapperVer >= DATA_SCHEMA_VERSION) && hasDays) {
+      return { kind: "v3", wrapperVer: wrapperVer, schemaVer: schemaVer };
+    }
+    if (hasMonthExpenses || wrapperVer === 2 || schemaVer < DATA_SCHEMA_VERSION) {
+      return { kind: "v2", wrapperVer: wrapperVer, schemaVer: schemaVer };
+    }
+    if (schemaVer >= DATA_SCHEMA_VERSION && !hasDays) {
+      return { kind: "v3-incomplete", wrapperVer: wrapperVer, schemaVer: schemaVer };
+    }
+    return { kind: "v3", wrapperVer: wrapperVer, schemaVer: schemaVer };
   }
 
   function readImportBackupData(parsed) {
     var src = parsed && typeof parsed === "object" ? parsed : null;
     if (!src) throw new Error("File JSON không hợp lệ.");
-    var data = src.data && typeof src.data === "object" ? src.data : src;
+    var hasWrapper = !!(src.data && typeof src.data === "object");
+    var data = hasWrapper ? src.data : src;
     if (!data.months || typeof data.months !== "object") {
       throw new Error("File không có dữ liệu tháng hợp lệ.");
     }
-    return coercePayloadToV3(data);
+    var fmt = detectBackupFormat(data, hasWrapper ? src : null);
+    if (fmt.kind === "v3-incomplete") {
+      throw new Error(
+        "File backup v3 không hợp lệ (thiếu mục days). Hãy export lại từ app mới hoặc dùng file backup v2."
+      );
+    }
+    var normalized = coercePayloadToV3(data);
+    var liveExpenseCount = 0;
+    Object.keys(normalized.days || {}).forEach(function (dk) {
+      var shard = normalized.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses.forEach(function (e) {
+        if (!isRowDeleted(e)) liveExpenseCount += 1;
+      });
+    });
+    if (liveExpenseCount === 0 && fmt.kind === "v2") {
+      throw new Error("File backup v2 không có khoản chi nào sau khi chuyển đổi.");
+    }
+    normalized._importMeta = {
+      format: fmt.kind,
+      expenseCount: liveExpenseCount,
+      monthCount: Object.keys(normalized.months || {}).length,
+      dayCount: Object.keys(normalized.days || {}).length,
+    };
+    return normalized;
   }
 
   function replaceAppDataFromImport(nextData) {
@@ -2284,6 +2351,7 @@
     state = null;
     try {
       localStorage.removeItem(STORAGE_V1);
+      localStorage.removeItem(STORAGE_V2);
       localStorage.setItem(STORAGE_V3, JSON.stringify(getAppPayload()));
     } catch (e) {
       throw new Error("Không thể ghi dữ liệu vào localStorage.");
@@ -2452,27 +2520,45 @@
     ) {
       return;
     }
+    var importMeta = nextData._importMeta || {};
+    delete nextData._importMeta;
     replaceAppDataFromImport(nextData);
+    var importDetail =
+      importMeta.format === "v2"
+        ? " (file v2 → " +
+          (importMeta.expenseCount || 0) +
+          " khoản / " +
+          (importMeta.dayCount || 0) +
+          " ngày)"
+        : " (" +
+          (importMeta.expenseCount || 0) +
+          " khoản / " +
+          (importMeta.dayCount || 0) +
+          " ngày)";
     if (supabaseEnabled && supabaseClient) {
       lastSyncedPayload = "";
       try {
         await syncToSupabaseNow({ forceLocal: true });
         setSettingsDataStatus(
-          "Đã import và ghi đè cloud bằng file backup này.",
+          "Đã import" + importDetail + " và ghi đè cloud bằng file backup này.",
           "ok"
         );
       } catch (syncErr) {
         console.warn("import cloud sync:", syncErr);
         markPendingCloudPush();
         setSettingsDataStatus(
-          "Đã import local. Không ghi được cloud — đăng nhập lại hoặc bấm «Đồng bộ cloud».",
+          "Đã import local" +
+            importDetail +
+            ". Không ghi được cloud — đăng nhập lại hoặc bấm «Đồng bộ cloud».",
           "error"
         );
       }
     } else {
       markPendingCloudPush();
       setSettingsDataStatus(
-        "Đã import local. Đăng nhập cloud — app sẽ tự ghi đè cloud bằng file vừa import.",
+        "Đã import local" +
+          importDetail +
+          ". Đăng nhập cloud — app sẽ tự ghi đè cloud bằng file vừa import.",
         "ok"
       );
     }
