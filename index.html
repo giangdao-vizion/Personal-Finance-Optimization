@@ -241,15 +241,12 @@
             <div class="expense-datetime-row">
               <input type="date" id="expense-date" class="expense-date-input" aria-label="Ngày chi" />
               <input
-                type="text"
+                type="time"
                 id="expense-time"
                 class="expense-time-input"
-                inputmode="numeric"
+                step="60"
                 autocomplete="off"
-                placeholder="HH:MM"
-                maxlength="5"
-                spellcheck="false"
-                aria-label="Giờ chi (24h)"
+                aria-label="Giờ chi"
               />
             </div>
           </label>
@@ -904,15 +901,12 @@
         <div class="expense-datetime-row">
           <input type="date" id="edit-expense-date" class="expense-date-input" aria-label="Ngày chi" />
           <input
-            type="text"
+            type="time"
             id="edit-expense-time"
             class="expense-time-input"
-            inputmode="numeric"
+            step="60"
             autocomplete="off"
-            placeholder="HH:MM"
-            maxlength="5"
-            spellcheck="false"
-            aria-label="Giờ chi (24h)"
+            aria-label="Giờ chi"
           />
         </div>
       </label>

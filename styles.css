@@ -3117,7 +3117,8 @@ select:focus-visible {
 }
 
 .expense-datetime-row .expense-date-input,
-.expense-datetime-row input[type="date"] {
+.expense-datetime-row input[type="date"],
+.expense-datetime-row input[type="time"] {
   flex: 1 1 auto;
   min-width: 0;
   width: auto;
@@ -3126,25 +3127,16 @@ select:focus-visible {
   min-height: 36px;
   padding: 0.3rem 0.4rem;
   font-size: 0.8125rem;
-}
-
-.expense-datetime-row .expense-time-input {
-  flex: 0 0 4.65rem;
-  width: 4.65rem;
-  max-width: 4.65rem;
-  min-width: 4.65rem;
-  box-sizing: border-box;
-  min-height: 36px;
-  padding: 0.3rem 0.2rem;
-  font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
-  text-align: center;
-  letter-spacing: 0.02em;
 }
 
-.expense-datetime-row .expense-time-input::placeholder {
-  font-size: 0.75rem;
-  letter-spacing: 0;
+.expense-datetime-row .expense-time-input,
+.expense-datetime-row input[type="time"] {
+  flex: 1 1 38%;
+  min-width: 6.25rem;
+  max-width: 9.5rem;
+  padding: 0.3rem 0.35rem;
+  text-align: center;
 }
 
 /* Tooltip "Cố định" trong modal sửa khoản chi: bung sang phải icon */
