@@ -574,9 +574,10 @@
   var authStateListenerBound = false;
   var syncInFlight = false;
   var syncPending = false;
+  var syncPendingOpts = null;
   var cloudPollTimer = null;
   /** Poll cloud khi Realtime ngắt (hay gặp trên iPhone/PWA). */
-  var CLOUD_POLL_MS = 20000;
+  var CLOUD_POLL_MS = 8000;
 
   function touchLocalData() {
     /* giữ hook cho telemetry / guard tương lai */
@@ -806,6 +807,7 @@
     if (!supabaseEnabled || !supabaseClient || isApplyingCloudSnapshot) return;
     if (syncInFlight) {
       syncPending = true;
+      syncPendingOpts = mergeSyncOpts(syncPendingOpts, opts);
       return;
     }
     syncInFlight = true;
@@ -864,10 +866,18 @@
     } finally {
       syncInFlight = false;
       if (syncPending) {
+        var nextOpts = mergeSyncOpts(opts, syncPendingOpts);
         syncPending = false;
-        void syncToSupabaseNow(opts);
+        syncPendingOpts = null;
+        void syncToSupabaseNow(nextOpts);
       }
     }
+  }
+
+  function mergeSyncOpts(a, b) {
+    if (!a) return b || {};
+    if (!b) return a || {};
+    return { forceLocal: !!(a.forceLocal || b.forceLocal) };
   }
 
   function queueSupabaseSync(immediate) {
@@ -904,6 +914,17 @@
     persistLocalNow();
     if (opts.sync === false) return;
     queueSupabaseSync(!!opts.immediateSync);
+  }
+
+  async function saveAppDataAsync(opts) {
+    opts = opts || {};
+    persistLocalNow();
+    if (opts.sync === false) return;
+    if (opts.immediateSync) {
+      await syncToSupabaseNow();
+    } else {
+      queueSupabaseSync(false);
+    }
   }
 
   var app = loadAppData();
@@ -1151,10 +1172,10 @@
           event: "*",
           schema: "public",
           table: SUPABASE_TABLE,
-          filter: "id=eq." + SUPABASE_STATE_ID,
         },
         function (payload) {
-          if (!payload || !payload.new || !payload.new.payload) return;
+          if (!payload || !payload.new) return;
+          if (payload.new.id !== SUPABASE_STATE_ID || !payload.new.payload) return;
           var cloudData = normalizeAppDataShape(payload.new.payload);
           var cloudSig = wirePayloadSignature(cloudData);
           if (cloudSig === lastSyncedPayload) return;
@@ -1163,13 +1184,17 @@
             var localPayload = getAppPayloadForSync();
             var merged = mergePayloadForCloud(cloudData, localPayload);
             applyCloudMergedPayload(merged);
+            setAuthSyncHint("Đã nhận cập nhật từ cloud.", "ok");
           } finally {
             isApplyingCloudSnapshot = false;
           }
         }
       )
       .subscribe(function (status, err) {
-        if (status === "SUBSCRIBED") return;
+        if (status === "SUBSCRIBED") {
+          setAuthSyncHint("Realtime cloud đã kết nối.", "ok");
+          return;
+        }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           console.warn("Supabase Realtime:", status, err || "");
           setAuthSyncHint(
@@ -4983,9 +5008,7 @@
     }
   }
 
-  function persistAndRender(opts) {
-    if (!activeMonthKey || !state) return;
-    saveAppData(opts);
+  function renderAllViews() {
     renderSummary();
     renderExpenseList();
     renderReportModeButtons();
@@ -5004,6 +5027,18 @@
       renderSettingsJarsList();
       renderExportMonthPicker();
     }
+  }
+
+  function persistAndRender(opts) {
+    if (!activeMonthKey || !state) return;
+    saveAppData(opts);
+    renderAllViews();
+  }
+
+  async function persistAndRenderAsync(opts) {
+    if (!activeMonthKey || !state) return;
+    await saveAppDataAsync(opts);
+    renderAllViews();
   }
 
   function removeExpense(id) {
@@ -5553,6 +5588,11 @@
   elForm.addEventListener("submit", function (ev) {
     ev.preventDefault();
     if (!state) return;
+    void submitAddExpenseForm();
+  });
+
+  async function submitAddExpenseForm() {
+    if (!state) return;
     var amount = parseMoneyToVND(elAmount.value);
     if (amount <= 0) {
       elAmount.focus();
@@ -5605,9 +5645,9 @@
     updateAmountPreview(elAmount, elExpensePreview);
     resetAddExpenseDateInput();
     if (elExpenseFixed) elExpenseFixed.checked = false;
-    persistAndRender({ immediateSync: true });
+    await persistAndRenderAsync({ immediateSync: true });
     scrollAndHighlightExpenseRow(row.id);
-  });
+  }
 
   if (elBtnClear) {
     elBtnClear.addEventListener("click", function () {
