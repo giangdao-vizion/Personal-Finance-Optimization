@@ -213,6 +213,13 @@
               />
             </div>
           </label>
+          <div class="expense-checkbox-row">
+          <div class="field field-checkbox-expense field-checkbox-inline" id="expense-credit-card-field" hidden>
+            <label class="checkbox-row">
+              <input type="checkbox" id="expense-credit-card" />
+              <span class="checkbox-label-text">Credit card</span>
+            </label>
+          </div>
           <div class="field field-checkbox-expense field-checkbox-inline">
             <label class="checkbox-row">
               <input type="checkbox" id="expense-fixed" />
@@ -224,6 +231,7 @@
               </summary>
               <p class="field-hint">Tháng mới sẽ tự có khoản này. Sửa số tiền trong danh sách chi để cập nhật mặc định cho các tháng sau.</p>
             </details>
+          </div>
           </div>
         </div>
         <details class="field" id="expense-advanced-section">
@@ -340,6 +348,50 @@
         </div>
       </div>
     </details>
+
+    <details class="card report-card collapsible-card cc-report-card" id="cc-report-card" hidden aria-labelledby="cc-report-heading">
+      <summary class="collapsible-summary">
+        <h2 id="cc-report-heading" class="card-title collapsible-summary-title">Báo cáo Credit Card</h2>
+        <span class="collapsible-chevron" aria-hidden="true">
+          <svg class="icon-svg" width="22" height="22"><use href="#icon-chevron-down" /></svg>
+        </span>
+      </summary>
+      <div class="collapsible-panel cc-report-panel">
+        <div id="cc-cycle-overview" class="cc-cycle-overview"></div>
+
+        <h3 class="cc-report-subtitle">Cơ cấu chi tiêu</h3>
+        <div class="report-mode-bar cc-report-cycle-bar" role="tablist" aria-label="Chu kỳ biểu đồ danh mục">
+          <button type="button" id="cc-category-cycle-current" class="expense-filter-btn is-active" aria-pressed="true">Kỳ hiện tại</button>
+          <button type="button" id="cc-category-cycle-previous" class="expense-filter-btn" aria-pressed="false">Kỳ trước</button>
+        </div>
+        <div class="pie-chart-wrap cc-category-chart-wrap" id="cc-category-chart-wrap">
+          <p id="cc-category-empty" class="pie-chart-empty">Chưa có chi Credit card trong chu kỳ này.</p>
+          <div id="cc-category-body" class="pie-chart-body" hidden>
+            <svg class="pie-svg cc-pie-svg" id="cc-category-pie-svg" viewBox="-105 -105 210 210" role="img" aria-labelledby="cc-category-pie-title">
+              <title id="cc-category-pie-title">Cơ cấu chi Credit card theo danh mục</title>
+              <g id="cc-category-pie-slices"></g>
+              <g id="cc-category-pie-labels" aria-hidden="true"></g>
+              <g id="cc-category-pie-center" aria-hidden="true"></g>
+            </svg>
+            <ul id="cc-category-legend" class="pie-legend"></ul>
+          </div>
+        </div>
+
+        <h3 class="cc-report-subtitle">Xu hướng chi tiêu (kỳ hiện tại)</h3>
+        <div id="cc-trend-wrap" class="cc-trend-wrap">
+          <p id="cc-trend-empty" class="pie-chart-empty">Chưa có dữ liệu xu hướng.</p>
+          <svg id="cc-trend-svg" class="cc-trend-svg" viewBox="0 0 320 120" role="img" aria-label="Biểu đồ tích lũy chi Credit card" hidden></svg>
+        </div>
+
+        <h3 class="cc-report-subtitle">Giao dịch kỳ hiện tại</h3>
+        <label class="checkbox-row cc-timeline-filter">
+          <input type="checkbox" id="cc-timeline-large-only" />
+          <span class="checkbox-label-text">Chỉ khoản chi lớn (&gt; 1.000.000đ)</span>
+        </label>
+        <p id="cc-timeline-empty" class="pie-chart-empty" hidden>Chưa có giao dịch Credit card trong kỳ hiện tại.</p>
+        <ul id="cc-timeline-list" class="expense-list cc-timeline-list"></ul>
+      </div>
+    </details>
   </div>
 
   <div id="view-settings" class="app view-settings" hidden aria-hidden="true">
@@ -411,6 +463,28 @@
             Nghìn đồng (×1.000). Ví dụ <strong>25000</strong> = 25 triệu; có thể dán 25.000.000. Để <strong>0</strong> nếu chưa đặt mặc định.
           </p>
         </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="settings-credit-card-heading">
+      <h2 id="settings-credit-card-heading" class="card-title">Credit Card</h2>
+      <p class="field-hint settings-hint">Theo dõi chi tiêu thẻ theo chu kỳ sao kê riêng — không ảnh hưởng tổng chi tháng dương lịch.</p>
+      <label class="field field-checkbox-expense">
+        <span class="checkbox-row">
+          <input type="checkbox" id="settings-credit-card-enabled" />
+          <span class="checkbox-label-text">Bật chi tiêu Credit card</span>
+        </span>
+      </label>
+      <div id="settings-credit-card-fields" class="settings-credit-card-fields" hidden>
+        <label class="field">
+          <span class="field-label">Ngày sao kê</span>
+          <div class="select-wrap">
+            <select id="settings-credit-card-statement-day" aria-label="Ngày sao kê trong tháng"></select>
+          </div>
+        </label>
+        <p class="field-hint settings-credit-card-due-hint">
+          Ngày đến hạn: <strong id="settings-credit-card-due-display">—</strong>
+        </p>
       </div>
     </section>
 
@@ -842,6 +916,12 @@
           />
         </div>
       </label>
+      <div class="field field-checkbox-expense field-checkbox-inline" id="edit-expense-credit-card-field" hidden>
+        <label class="checkbox-row">
+          <input type="checkbox" id="edit-expense-credit-card" />
+          <span class="checkbox-label-text">Credit card</span>
+        </label>
+      </div>
       <div class="field field-checkbox-expense field-checkbox-inline">
         <label class="checkbox-row">
           <input type="checkbox" id="edit-expense-fixed" />

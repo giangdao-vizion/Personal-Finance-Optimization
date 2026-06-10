@@ -291,10 +291,43 @@
     return [];
   }
 
+  function defaultCreditCardSettings() {
+    return {
+      enabled: false,
+      statementDay: 1,
+      paidCycleEnds: [],
+    };
+  }
+
   function defaultSettings() {
     return {
       defaultLimit: 0,
       themeMode: "dark",
+      creditCard: defaultCreditCardSettings(),
+    };
+  }
+
+  function normalizeCreditCardSettings(cc) {
+    var src = cc && typeof cc === "object" ? cc : {};
+    var day = typeof src.statementDay === "number" ? Math.round(src.statementDay) : 1;
+    if (day < 1) day = 1;
+    if (day > 31) day = 31;
+    var paid = Array.isArray(src.paidCycleEnds)
+      ? src.paidCycleEnds.filter(function (k) {
+          return typeof k === "string" && /^\d{4}-\d{2}-\d{2}$/.test(k);
+        })
+      : [];
+    var seen = {};
+    var paidOut = [];
+    paid.forEach(function (k) {
+      if (seen[k]) return;
+      seen[k] = true;
+      paidOut.push(k);
+    });
+    return {
+      enabled: !!src.enabled,
+      statementDay: day,
+      paidCycleEnds: paidOut,
     };
   }
 
@@ -440,13 +473,188 @@
     out.defaultLimit =
       typeof lim === "number" && !isNaN(lim) ? Math.max(0, Math.round(lim)) : 0;
     out.themeMode = normalizeThemeMode(out.themeMode);
+    out.creditCard = normalizeCreditCardSettings(out.creditCard);
     return out;
   }
 
   /** Chỉ phần settings đồng bộ lên cloud — theme giữ cục bộ từng máy. */
   function settingsForCloudStorage(s) {
     var ns = normalizeSettings(s || {});
-    return { defaultLimit: ns.defaultLimit };
+    return {
+      defaultLimit: ns.defaultLimit,
+      creditCard: ns.creditCard,
+    };
+  }
+
+  function getCreditCardSettings() {
+    if (!app || !app.settings) return defaultCreditCardSettings();
+    return normalizeCreditCardSettings(app.settings.creditCard);
+  }
+
+  function isCreditCardFeatureEnabled() {
+    return getCreditCardSettings().enabled;
+  }
+
+  function daysInCalendarMonth(year, month) {
+    return new Date(year, month, 0).getDate();
+  }
+
+  function statementDayInMonth(year, month, statementDay) {
+    var dim = daysInCalendarMonth(year, month);
+    var d = Math.min(Math.max(1, statementDay), dim);
+    return { year: year, month: month, day: d };
+  }
+
+  function ymdToDayKey(y, mo, d) {
+    return (
+      y +
+      "-" +
+      String(mo).padStart(2, "0") +
+      "-" +
+      String(d).padStart(2, "0")
+    );
+  }
+
+  function addCalendarDays(year, month, day, delta) {
+    var dt = new Date(year, month - 1, day);
+    dt.setDate(dt.getDate() + delta);
+    return {
+      year: dt.getFullYear(),
+      month: dt.getMonth() + 1,
+      day: dt.getDate(),
+    };
+  }
+
+  function formatDayKeyViLong(key) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ""));
+    if (!m) return key || "";
+    return m[3] + "/" + m[2] + "/" + m[1];
+  }
+
+  function computeCreditCardDueDayKey(statementCloseKey) {
+    var d = dateFromDayKey(statementCloseKey);
+    if (!d) return "";
+    var y = d.getFullYear();
+    var mo = d.getMonth() + 1;
+    var day = d.getDate();
+    var due = addCalendarDays(y, mo, day, 15);
+    return ymdToDayKey(due.year, due.month, due.day);
+  }
+
+  /** Kỳ trước (đã chốt) và kỳ hiện tại theo ngày sao kê. */
+  function computeCreditCardCycles(refDate, statementDay) {
+    var ref = refDate instanceof Date ? refDate : new Date();
+    var today = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+    var y = today.getFullYear();
+    var mo = today.getMonth() + 1;
+    var todayKey = ymdToDayKey(y, mo, today.getDate());
+    var stmtThis = statementDayInMonth(y, mo, statementDay);
+    var closeKey = ymdToDayKey(stmtThis.year, stmtThis.month, stmtThis.day);
+    if (todayKey <= closeKey) {
+      var pm = mo - 1;
+      var py = y;
+      if (pm < 1) {
+        pm = 12;
+        py -= 1;
+      }
+      var stmtPrev = statementDayInMonth(py, pm, statementDay);
+      closeKey = ymdToDayKey(stmtPrev.year, stmtPrev.month, stmtPrev.day);
+    }
+    var closeParts = dateFromDayKey(closeKey);
+    if (!closeParts) {
+      return {
+        previous: { startKey: "", endKey: "", cycleKey: "", dueKey: "", total: 0 },
+        current: { startKey: "", endKey: todayKey, total: 0 },
+      };
+    }
+    var cy = closeParts.getFullYear();
+    var cmo = closeParts.getMonth() + 1;
+    var pm2 = cmo - 1;
+    var py2 = cy;
+    if (pm2 < 1) {
+      pm2 = 12;
+      py2 -= 1;
+    }
+    var prevCloseStmt = statementDayInMonth(py2, pm2, statementDay);
+    var prevCloseKey = ymdToDayKey(prevCloseStmt.year, prevCloseStmt.month, prevCloseStmt.day);
+    var prevStartKey = dayKeyShift(prevCloseKey, 1);
+    var curStartKey = dayKeyShift(closeKey, 1);
+    return {
+      previous: {
+        startKey: prevStartKey,
+        endKey: closeKey,
+        cycleKey: closeKey,
+        dueKey: computeCreditCardDueDayKey(closeKey),
+        total: 0,
+      },
+      current: {
+        startKey: curStartKey,
+        endKey: todayKey,
+        total: 0,
+      },
+    };
+  }
+
+  function isDayKeyInInclusiveRange(dayKey, startKey, endKey) {
+    if (!dayKey || !startKey || !endKey) return false;
+    return dayKey >= startKey && dayKey <= endKey;
+  }
+
+  function daysUntilDayKey(targetKey, fromDate) {
+    var from = fromDate instanceof Date ? fromDate : new Date();
+    var fromKey = ymdToDayKey(from.getFullYear(), from.getMonth() + 1, from.getDate());
+    var a = dateFromDayKey(fromKey);
+    var b = dateFromDayKey(targetKey);
+    if (!a || !b) return 0;
+    return Math.round((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000));
+  }
+
+  function isCreditCardExpenseRow(e) {
+    return !!(e && e.isCreditCard && !isRowDeleted(e));
+  }
+
+  function forEachCreditCardExpense(fn) {
+    forEachExpenseInApp(function (e, dk) {
+      if (!isCreditCardExpenseRow(e)) return;
+      fn(e, dk);
+    });
+  }
+
+  function getCreditCardExpensesInRange(startKey, endKey) {
+    var out = [];
+    if (!startKey || !endKey) return out;
+    forEachCreditCardExpense(function (e) {
+      var dk = dayKeyFromTs(expenseDateTs(e));
+      if (isDayKeyInInclusiveRange(dk, startKey, endKey)) out.push(e);
+    });
+    out.sort(function (a, b) {
+      var at = expenseDateTs(a);
+      var bt = expenseDateTs(b);
+      if (at !== bt) return bt - at;
+      return String(b.id || "").localeCompare(String(a.id || ""));
+    });
+    return out;
+  }
+
+  function sumExpenseRowsAmount(rows) {
+    return (rows || []).reduce(function (s, e) {
+      return s + (typeof e.amount === "number" ? e.amount : 0);
+    }, 0);
+  }
+
+  function isCreditCardCyclePaid(cycleKey) {
+    if (!cycleKey) return false;
+    return getCreditCardSettings().paidCycleEnds.indexOf(cycleKey) >= 0;
+  }
+
+  function markCreditCardCyclePaid(cycleKey) {
+    if (!cycleKey) return;
+    if (!app.settings) app.settings = defaultSettings();
+    if (!app.settings.creditCard) app.settings.creditCard = defaultCreditCardSettings();
+    var cc = normalizeCreditCardSettings(app.settings.creditCard);
+    if (cc.paidCycleEnds.indexOf(cycleKey) < 0) cc.paidCycleEnds.push(cycleKey);
+    app.settings.creditCard = cc;
+    saveAppData({ configDirty: true });
   }
 
   function emptyV3AppData() {
@@ -1022,7 +1230,20 @@
         },
         jarUpdatedAt
       ).map(normalizeSpendingJarRow),
-      settings: normalizeSettings(base.settings),
+      settings: (function () {
+        var merged = normalizeSettings(base.settings);
+        var rCc = normalizeCreditCardSettings((remote.settings || {}).creditCard);
+        var lCc = normalizeCreditCardSettings((local.settings || {}).creditCard);
+        var paid = {};
+        (rCc.paidCycleEnds || []).forEach(function (k) {
+          paid[k] = true;
+        });
+        (lCc.paidCycleEnds || []).forEach(function (k) {
+          paid[k] = true;
+        });
+        merged.creditCard.paidCycleEnds = Object.keys(paid).sort();
+        return merged;
+      })(),
       configDataUpdatedAt: Math.max(rAt, lAt),
       configNeedSync: false,
     };
@@ -2440,6 +2661,7 @@
 
   function finishAppBootstrap(initialKey) {
     renderAuthUi();
+    syncCreditCardFeatureVisibility();
     openMonth(initialKey, { skipUrl: true });
     initSupabaseSync(initialKey);
   }
@@ -2691,6 +2913,32 @@
   var elBtnSettingsDefaultLimitSave = document.getElementById("btn-settings-default-limit-save");
   var elBtnSettingsDefaultLimitCancel = document.getElementById("btn-settings-default-limit-cancel");
   var settingsDefaultLimitBeforeEdit = 0;
+  var elSettingsCreditCardEnabled = document.getElementById("settings-credit-card-enabled");
+  var elSettingsCreditCardFields = document.getElementById("settings-credit-card-fields");
+  var elSettingsCreditCardStatementDay = document.getElementById(
+    "settings-credit-card-statement-day"
+  );
+  var elSettingsCreditCardDueDisplay = document.getElementById("settings-credit-card-due-display");
+  var elExpenseCreditCardField = document.getElementById("expense-credit-card-field");
+  var elExpenseCreditCard = document.getElementById("expense-credit-card");
+  var elEditExpenseCreditCardField = document.getElementById("edit-expense-credit-card-field");
+  var elEditExpenseCreditCard = document.getElementById("edit-expense-credit-card");
+  var elCcReportCard = document.getElementById("cc-report-card");
+  var elCcCycleOverview = document.getElementById("cc-cycle-overview");
+  var elCcCategoryCycleCurrent = document.getElementById("cc-category-cycle-current");
+  var elCcCategoryCyclePrevious = document.getElementById("cc-category-cycle-previous");
+  var elCcCategoryEmpty = document.getElementById("cc-category-empty");
+  var elCcCategoryBody = document.getElementById("cc-category-body");
+  var elCcCategoryPieSlices = document.getElementById("cc-category-pie-slices");
+  var elCcCategoryPieLabels = document.getElementById("cc-category-pie-labels");
+  var elCcCategoryPieCenter = document.getElementById("cc-category-pie-center");
+  var elCcCategoryLegend = document.getElementById("cc-category-legend");
+  var elCcCategoryPieTitle = document.getElementById("cc-category-pie-title");
+  var elCcTrendEmpty = document.getElementById("cc-trend-empty");
+  var elCcTrendSvg = document.getElementById("cc-trend-svg");
+  var elCcTimelineLargeOnly = document.getElementById("cc-timeline-large-only");
+  var elCcTimelineEmpty = document.getElementById("cc-timeline-empty");
+  var elCcTimelineList = document.getElementById("cc-timeline-list");
   var elSettingsThemeSelect = document.getElementById("settings-theme-select");
   var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
   var elSettingsAddFixedPanel = document.getElementById("settings-add-fixed-panel");
@@ -2808,6 +3056,9 @@
   var elAuthSubmit = document.getElementById("auth-submit");
   var elAuthCancel = document.getElementById("auth-cancel");
   var reportMode = "jars";
+  var creditReportCategoryCycle = "current";
+  var creditReportLargeOnly = false;
+  var CC_LARGE_EXPENSE_THRESHOLD = 1000000;
   var reportDailyRange = "month";
   var reportDailyNeedsAutoScroll = true;
   /** Ngày đang chọn trên biểu đồ theo ngày (YYYY-MM-DD), null = không chọn. */
@@ -4049,6 +4300,7 @@
     if (typeof row.deletedAt === "number" && row.deletedAt > 0) {
       o.deletedAt = Math.round(row.deletedAt);
     }
+    if (row.isCreditCard) o.isCreditCard = true;
     return o;
   }
 
@@ -5581,6 +5833,471 @@
     renderExpenseList();
   }
 
+  function syncCreditCardFeatureVisibility() {
+    var on = isCreditCardFeatureEnabled();
+    if (elCcReportCard) elCcReportCard.hidden = !on;
+    if (elExpenseCreditCardField) elExpenseCreditCardField.hidden = !on;
+    if (elEditExpenseCreditCardField) elEditExpenseCreditCardField.hidden = !on;
+    if (elSettingsCreditCardFields) elSettingsCreditCardFields.hidden = !on;
+    if (!on && elExpenseCreditCard) elExpenseCreditCard.checked = false;
+  }
+
+  function populateCreditCardStatementDaySelect() {
+    if (!elSettingsCreditCardStatementDay) return;
+    if (elSettingsCreditCardStatementDay.options.length >= 31) return;
+    elSettingsCreditCardStatementDay.innerHTML = "";
+    var i;
+    for (i = 1; i <= 31; i++) {
+      var opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = "Ngày " + (i < 10 ? "0" : "") + i;
+      elSettingsCreditCardStatementDay.appendChild(opt);
+    }
+  }
+
+  function updateSettingsCreditCardDueDisplay() {
+    if (!elSettingsCreditCardDueDisplay) return;
+    var cc = getCreditCardSettings();
+    if (!cc.enabled) {
+      elSettingsCreditCardDueDisplay.textContent = "—";
+      return;
+    }
+    var cycles = computeCreditCardCycles(new Date(), cc.statementDay);
+    var dueKey = cycles.previous && cycles.previous.dueKey ? cycles.previous.dueKey : "";
+    elSettingsCreditCardDueDisplay.textContent = dueKey
+      ? formatDayKeyViLong(dueKey)
+      : "—";
+  }
+
+  function renderSettingsCreditCard() {
+    populateCreditCardStatementDaySelect();
+    var cc = getCreditCardSettings();
+    if (elSettingsCreditCardEnabled) elSettingsCreditCardEnabled.checked = cc.enabled;
+    if (elSettingsCreditCardStatementDay) {
+      elSettingsCreditCardStatementDay.value = String(cc.statementDay);
+    }
+    updateSettingsCreditCardDueDisplay();
+    syncCreditCardFeatureVisibility();
+  }
+
+  function saveSettingsCreditCardFromUi() {
+    if (!app.settings) app.settings = defaultSettings();
+    var cc = normalizeCreditCardSettings(app.settings.creditCard);
+    cc.enabled = !!(elSettingsCreditCardEnabled && elSettingsCreditCardEnabled.checked);
+    if (elSettingsCreditCardStatementDay) {
+      cc.statementDay = parseInt(elSettingsCreditCardStatementDay.value, 10) || 1;
+    }
+    app.settings.creditCard = normalizeCreditCardSettings(cc);
+    updateSettingsCreditCardDueDisplay();
+    syncCreditCardFeatureVisibility();
+    saveAppData({ configDirty: true });
+    renderCreditCardReport();
+  }
+
+  function renderDonutChartToTarget(target, segments, accessibleTitle) {
+    if (!target || !target.body || !target.slices || !target.legend) return;
+    var elEmpty = target.empty;
+    var elBody = target.body;
+    var elSlices = target.slices;
+    var elSliceLabels = target.sliceLabels;
+    var elCenter = target.center;
+    var elLegend = target.legend;
+    var elTitle = target.title;
+
+    function clearDonutLayers() {
+      elSlices.innerHTML = "";
+      if (elSliceLabels) elSliceLabels.innerHTML = "";
+      if (elCenter) elCenter.innerHTML = "";
+    }
+
+    var total = segments.reduce(function (s, x) {
+      return s + x.amount;
+    }, 0);
+
+    if (total <= 0 || !segments.length) {
+      if (elEmpty) elEmpty.hidden = false;
+      elBody.hidden = true;
+      clearDonutLayers();
+      elLegend.innerHTML = "";
+      if (elTitle) elTitle.textContent = accessibleTitle || "Biểu đồ";
+      return;
+    }
+
+    if (elEmpty) elEmpty.hidden = true;
+    elBody.hidden = false;
+
+    var cx = 0;
+    var cy = 0;
+    var rOuter = 100;
+    var rInner = 58;
+    var rLabel = (rOuter + rInner) / 2;
+    var strokeW = 2.5;
+    clearDonutLayers();
+
+    function appendPctLabel(am, pctStr) {
+      if (!elSliceLabels || !pctStr) return;
+      var tx = cx + rLabel * Math.cos(am);
+      var ty = cy + rLabel * Math.sin(am);
+      var t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      t.setAttribute("class", "pie-donut-pct");
+      t.setAttribute("x", tx.toFixed(2));
+      t.setAttribute("y", ty.toFixed(2));
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("dominant-baseline", "middle");
+      t.textContent = pctStr;
+      elSliceLabels.appendChild(t);
+    }
+
+    if (segments.length === 1) {
+      var seg0 = segments[0];
+      var aEnd = -Math.PI / 2 + 2 * Math.PI * 0.999995;
+      var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", donutSlicePath(cx, cy, rOuter, rInner, -Math.PI / 2, aEnd));
+      path.setAttribute("fill", sliceFillAt(0, seg0));
+      path.setAttribute("class", "pie-donut-slice");
+      path.setAttribute("stroke-width", String(strokeW));
+      elSlices.appendChild(path);
+      appendPctLabel(0, "100%");
+    } else {
+      var start = -Math.PI / 2;
+      segments.forEach(function (seg, i) {
+        var frac = seg.amount / total;
+        var a0 = start;
+        var a1 = start + frac * 2 * Math.PI;
+        start = a1;
+        var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", donutSlicePath(cx, cy, rOuter, rInner, a0, a1));
+        path.setAttribute("fill", sliceFillAt(i, seg));
+        path.setAttribute("class", "pie-donut-slice");
+        path.setAttribute("stroke-width", String(strokeW));
+        elSlices.appendChild(path);
+        var span = a1 - a0;
+        var pctInt = Math.round((seg.amount / total) * 100);
+        if (span >= 0.2 && pctInt > 0) appendPctLabel((a0 + a1) / 2, pctInt + "%");
+      });
+    }
+
+    if (elCenter) {
+      var sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      sub.setAttribute("class", "pie-donut-center-sub");
+      sub.setAttribute("x", "0");
+      sub.setAttribute("y", "-10");
+      sub.setAttribute("text-anchor", "middle");
+      sub.textContent = "Tổng chi";
+      var tot = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      tot.setAttribute("class", "pie-donut-center-total");
+      tot.setAttribute("x", "0");
+      tot.setAttribute("y", "16");
+      tot.setAttribute("text-anchor", "middle");
+      tot.textContent = formatMoneyVNDShort(total);
+      elCenter.appendChild(sub);
+      elCenter.appendChild(tot);
+    }
+
+    elLegend.innerHTML = "";
+    segments.forEach(function (seg, i) {
+      var pct = total > 0 ? Math.round((seg.amount / total) * 1000) / 10 : 0;
+      var li = document.createElement("li");
+      li.className = "pie-legend-item";
+      var dot = document.createElement("span");
+      dot.className = "pie-legend-dot";
+      dot.style.background = sliceFillAt(i, seg);
+      var text = document.createElement("span");
+      text.className = "pie-legend-text";
+      text.innerHTML =
+        '<span class="pie-legend-label"></span><span class="pie-legend-meta"></span>';
+      text.querySelector(".pie-legend-label").textContent = seg.label;
+      text.querySelector(".pie-legend-meta").textContent =
+        formatMoneyVND(seg.amount) + " · " + pct + "%";
+      li.appendChild(dot);
+      li.appendChild(text);
+      elLegend.appendChild(li);
+    });
+
+    if (elTitle) elTitle.textContent = accessibleTitle || "Biểu đồ";
+  }
+
+  function creditCategorySegmentsForRange(startKey, endKey) {
+    var rows = getCreditCardExpensesInRange(startKey, endKey);
+    var map = {};
+    var order = [];
+    rows.forEach(function (e) {
+      var cat = e.category;
+      if (!map[cat]) {
+        map[cat] = 0;
+        order.push(cat);
+      }
+      map[cat] += e.amount;
+    });
+    return order
+      .map(function (catId, i) {
+        return {
+          id: catId,
+          label: getCategoryLabel(catId),
+          amount: map[catId],
+          fill: PIE_COLORS[i % PIE_COLORS.length],
+        };
+      })
+      .filter(function (s) {
+        return s.amount > 0;
+      })
+      .sort(function (a, b) {
+        return b.amount - a.amount;
+      });
+  }
+
+  function renderCreditCardCategoryChart(cycles) {
+    var range =
+      creditReportCategoryCycle === "previous" ? cycles.previous : cycles.current;
+    var segments = creditCategorySegmentsForRange(range.startKey, range.endKey);
+    renderDonutChartToTarget(
+      {
+        empty: elCcCategoryEmpty,
+        body: elCcCategoryBody,
+        slices: elCcCategoryPieSlices,
+        sliceLabels: elCcCategoryPieLabels,
+        center: elCcCategoryPieCenter,
+        legend: elCcCategoryLegend,
+        title: elCcCategoryPieTitle,
+      },
+      segments,
+      "Credit card theo danh mục"
+    );
+    if (elCcCategoryCycleCurrent) {
+      elCcCategoryCycleCurrent.classList.toggle(
+        "is-active",
+        creditReportCategoryCycle === "current"
+      );
+      elCcCategoryCycleCurrent.setAttribute(
+        "aria-pressed",
+        creditReportCategoryCycle === "current" ? "true" : "false"
+      );
+    }
+    if (elCcCategoryCyclePrevious) {
+      elCcCategoryCyclePrevious.classList.toggle(
+        "is-active",
+        creditReportCategoryCycle === "previous"
+      );
+      elCcCategoryCyclePrevious.setAttribute(
+        "aria-pressed",
+        creditReportCategoryCycle === "previous" ? "true" : "false"
+      );
+    }
+  }
+
+  function dayKeysFromTo(startKey, endKey) {
+    var out = [];
+    var k = startKey;
+    var guard = 0;
+    while (k && k <= endKey && guard < 400) {
+      out.push(k);
+      if (k === endKey) break;
+      k = dayKeyShift(k, 1);
+      guard += 1;
+    }
+    return out;
+  }
+
+  function renderCreditCardTrendChart(cycles) {
+    if (!elCcTrendSvg || !elCcTrendEmpty) return;
+    var cur = cycles.current;
+    var keys = dayKeysFromTo(cur.startKey, cur.endKey);
+    if (!keys.length) {
+      elCcTrendEmpty.hidden = false;
+      elCcTrendSvg.hidden = true;
+      elCcTrendSvg.innerHTML = "";
+      return;
+    }
+    var byDay = {};
+    getCreditCardExpensesInRange(cur.startKey, cur.endKey).forEach(function (e) {
+      var dk = dayKeyFromTs(expenseDateTs(e));
+      if (!dk) return;
+      byDay[dk] = (byDay[dk] || 0) + e.amount;
+    });
+    var cumulative = 0;
+    var points = [];
+    keys.forEach(function (dk) {
+      cumulative += byDay[dk] || 0;
+      points.push({ y: cumulative, key: dk });
+    });
+    if (cumulative <= 0) {
+      elCcTrendEmpty.hidden = false;
+      elCcTrendSvg.hidden = true;
+      elCcTrendSvg.innerHTML = "";
+      return;
+    }
+    elCcTrendEmpty.hidden = true;
+    elCcTrendSvg.hidden = false;
+    var w = 320;
+    var h = 120;
+    var padL = 8;
+    var padR = 8;
+    var padT = 10;
+    var padB = 22;
+    var maxY = cumulative;
+    var n = Math.max(1, points.length - 1);
+    var coords = points.map(function (p, i) {
+      var x = padL + (i / n) * (w - padL - padR);
+      var y = padT + (1 - p.y / maxY) * (h - padT - padB);
+      return { x: x, y: y, key: p.key };
+    });
+    var poly = coords
+      .map(function (c) {
+        return c.x.toFixed(1) + "," + c.y.toFixed(1);
+      })
+      .join(" ");
+    var svg =
+      '<polyline fill="none" stroke="var(--accent)" stroke-width="2.5" points="' +
+      poly +
+      '"/>';
+    coords.forEach(function (c, idx) {
+      if (idx === 0 || idx === coords.length - 1 || coords.length <= 8) {
+        svg +=
+          '<circle cx="' +
+          c.x.toFixed(1) +
+          '" cy="' +
+          c.y.toFixed(1) +
+          '" r="3" fill="var(--accent)"/>';
+      }
+    });
+    if (coords.length) {
+      var last = coords[coords.length - 1];
+      var first = coords[0];
+      svg +=
+        '<text x="' +
+        first.x.toFixed(1) +
+        '" y="' +
+        (h - 4) +
+        '" class="cc-trend-axis-label" text-anchor="start">' +
+        dayLabelFromKey(first.key) +
+        "</text>";
+      svg +=
+        '<text x="' +
+        last.x.toFixed(1) +
+        '" y="' +
+        (h - 4) +
+        '" class="cc-trend-axis-label" text-anchor="end">' +
+        dayLabelFromKey(last.key) +
+        "</text>";
+    }
+    elCcTrendSvg.innerHTML = svg;
+  }
+
+  function renderCreditCardTimeline(cycles) {
+    if (!elCcTimelineList || !elCcTimelineEmpty) return;
+    var rows = getCreditCardExpensesInRange(cycles.current.startKey, cycles.current.endKey);
+    if (creditReportLargeOnly) {
+      rows = rows.filter(function (e) {
+        return (e.amount || 0) > CC_LARGE_EXPENSE_THRESHOLD;
+      });
+    }
+    elCcTimelineList.innerHTML = "";
+    if (!rows.length) {
+      elCcTimelineEmpty.hidden = false;
+      elCcTimelineList.hidden = true;
+      return;
+    }
+    elCcTimelineEmpty.hidden = true;
+    elCcTimelineList.hidden = false;
+    rows.forEach(function (e) {
+      elCcTimelineList.appendChild(createExpenseListRowElement(e, true));
+    });
+  }
+
+  function renderCreditCardCycleOverview(cycles) {
+    if (!elCcCycleOverview) return;
+    elCcCycleOverview.innerHTML = "";
+    var prevTotal = sumExpenseRowsAmount(
+      getCreditCardExpensesInRange(cycles.previous.startKey, cycles.previous.endKey)
+    );
+    var curTotal = sumExpenseRowsAmount(
+      getCreditCardExpensesInRange(cycles.current.startKey, cycles.current.endKey)
+    );
+    var paid = isCreditCardCyclePaid(cycles.previous.cycleKey);
+    var daysLeft = daysUntilDayKey(cycles.previous.dueKey, new Date());
+
+    function makeBlock(title, bodyHtml) {
+      var block = document.createElement("div");
+      block.className = "cc-cycle-block";
+      var h = document.createElement("h3");
+      h.className = "cc-cycle-block-title";
+      h.textContent = title;
+      block.appendChild(h);
+      var body = document.createElement("div");
+      body.className = "cc-cycle-block-body";
+      body.innerHTML = bodyHtml;
+      block.appendChild(body);
+      return block;
+    }
+
+    var prevHtml =
+      '<p class="cc-cycle-range">' +
+      formatDayKeyViLong(cycles.previous.startKey) +
+      " – " +
+      formatDayKeyViLong(cycles.previous.endKey) +
+      '</p><p class="cc-cycle-amount">' +
+      formatMoneyVND(prevTotal) +
+      "</p>";
+    if (paid) {
+      prevHtml += '<p class="cc-cycle-status cc-cycle-status-paid">Đã thanh toán</p>';
+    } else {
+      var daysText =
+        daysLeft < 0
+          ? "Quá hạn " + Math.abs(daysLeft) + " ngày"
+          : daysLeft === 0
+          ? "Hôm nay"
+          : "Còn " + daysLeft + " ngày";
+      prevHtml +=
+        '<p class="cc-cycle-due">Hạn thanh toán: <strong>' +
+        formatDayKeyViLong(cycles.previous.dueKey) +
+        "</strong> — " +
+        daysText +
+        "</p>";
+      if (prevTotal > 0) {
+        prevHtml +=
+          '<button type="button" class="btn btn-primary btn-sm cc-cycle-pay-btn" data-cycle-key="' +
+          cycles.previous.cycleKey +
+          '">Đã thanh toán</button>';
+      }
+    }
+    elCcCycleOverview.appendChild(makeBlock("Kỳ trước (đã chốt)", prevHtml));
+
+    var curHtml =
+      '<p class="cc-cycle-range">' +
+      formatDayKeyViLong(cycles.current.startKey) +
+      " – " +
+      formatDayKeyViLong(cycles.current.endKey) +
+      '</p><p class="cc-cycle-amount cc-cycle-amount-current">Tổng chi tiêu tạm tính: <strong>' +
+      formatMoneyVND(curTotal) +
+      "</strong></p>";
+    elCcCycleOverview.appendChild(
+      makeBlock("Kỳ hiện tại (đang tiêu dùng)", curHtml)
+    );
+
+    elCcCycleOverview.querySelectorAll(".cc-cycle-pay-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = btn.getAttribute("data-cycle-key");
+        if (!key) return;
+        markCreditCardCyclePaid(key);
+        renderCreditCardReport();
+      });
+    });
+  }
+
+  function renderCreditCardReport() {
+    if (!isCreditCardFeatureEnabled()) {
+      syncCreditCardFeatureVisibility();
+      return;
+    }
+    syncCreditCardFeatureVisibility();
+    var cc = getCreditCardSettings();
+    var cycles = computeCreditCardCycles(new Date(), cc.statementDay);
+    renderCreditCardCycleOverview(cycles);
+    renderCreditCardCategoryChart(cycles);
+    renderCreditCardTrendChart(cycles);
+    renderCreditCardTimeline(cycles);
+  }
+
   function renderReportModeButtons() {
     var map = [
       { key: "jars", el: elReportModeJars },
@@ -5653,6 +6370,7 @@
     }
     renderFixedTemplatesList();
     renderReportJarsProgress();
+    renderCreditCardReport();
     if (elSideMenu && !elSideMenu.hidden) {
       renderSideMenuList();
     }
@@ -5660,6 +6378,7 @@
       renderSettingsCategoriesList();
       renderSettingsJarsList();
       renderExportMonthPicker();
+      renderSettingsCreditCard();
     }
   }
 
@@ -5674,6 +6393,7 @@
     }
     renderFixedTemplatesList();
     renderReportJarsProgress();
+    renderCreditCardReport();
     if (elSideMenu && !elSideMenu.hidden) {
       renderSideMenuList();
     }
@@ -6136,6 +6856,7 @@
     renderSettingsNewCategoryIconPicker();
     renderSettingsJarsList();
     renderExportMonthPicker();
+    renderSettingsCreditCard();
     setSettingsDataStatus("", "");
     setSettingsAddJarPanelOpen(false);
     setSettingsAddCategoryPanelOpen(false);
@@ -6296,6 +7017,7 @@
       row.templateId = templateId;
       row.monthEdited = true;
     }
+    if (elExpenseCreditCard && elExpenseCreditCard.checked) row.isCreditCard = true;
     flushActiveMonthIntoApp();
     state.expenses.push(row);
     touchLocalData();
@@ -6307,6 +7029,7 @@
     updateAmountPreview(elAmount, elExpensePreview);
     resetAddExpenseDateInput();
     if (elExpenseFixed) elExpenseFixed.checked = false;
+    if (elExpenseCreditCard) elExpenseCreditCard.checked = false;
     await persistAndRenderAsync({ immediateSync: true });
     scrollAndHighlightExpenseRow(row.id);
   }
@@ -6437,6 +7160,31 @@
       applyThemeSettings();
       renderThemeModeOptions();
       saveAppData();
+    });
+  }
+
+  if (elSettingsCreditCardEnabled) {
+    elSettingsCreditCardEnabled.addEventListener("change", saveSettingsCreditCardFromUi);
+  }
+  if (elSettingsCreditCardStatementDay) {
+    elSettingsCreditCardStatementDay.addEventListener("change", saveSettingsCreditCardFromUi);
+  }
+  if (elCcCategoryCycleCurrent) {
+    elCcCategoryCycleCurrent.addEventListener("click", function () {
+      creditReportCategoryCycle = "current";
+      renderCreditCardReport();
+    });
+  }
+  if (elCcCategoryCyclePrevious) {
+    elCcCategoryCyclePrevious.addEventListener("click", function () {
+      creditReportCategoryCycle = "previous";
+      renderCreditCardReport();
+    });
+  }
+  if (elCcTimelineLargeOnly) {
+    elCcTimelineLargeOnly.addEventListener("change", function () {
+      creditReportLargeOnly = !!elCcTimelineLargeOnly.checked;
+      renderCreditCardReport();
     });
   }
 
@@ -6744,6 +7492,9 @@
         ? "Chỉ bật cố định ở tháng hiện tại hoặc tương lai."
         : "";
     }
+    if (elEditExpenseCreditCard) {
+      elEditExpenseCreditCard.checked = !!e.isCreditCard;
+    }
     if (elEditTemplateNote) {
       if (e.templateId) {
         elEditTemplateNote.hidden = false;
@@ -6856,6 +7607,11 @@
       }
     }
     e.updatedAt = nowTs();
+    if (isCreditCardFeatureEnabled()) {
+      e.isCreditCard = !!(elEditExpenseCreditCard && elEditExpenseCreditCard.checked);
+    } else {
+      delete e.isCreditCard;
+    }
     if (elEditExpenseFixed && elEditExpenseFixed.checked && !e.templateId) {
       var isPastMonth =
         !!activeMonthKey &&
