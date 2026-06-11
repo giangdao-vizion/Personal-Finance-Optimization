@@ -705,12 +705,20 @@
     return out;
   }
 
+  function hasV3DayShards(daySrc) {
+    if (!daySrc || typeof daySrc !== "object") return false;
+    return Object.keys(daySrc).some(function (k) {
+      return /^\d{4}-\d{2}-\d{2}$/.test(k);
+    });
+  }
+
   function normalizeAppDataShape(d) {
     var src = d && typeof d === "object" ? d : {};
     if (
-      (src.schemaVersion || 0) < DATA_SCHEMA_VERSION ||
-      !src.days ||
-      typeof src.days !== "object"
+      !hasV3DayShards(src.days) &&
+      ((src.schemaVersion || 0) < DATA_SCHEMA_VERSION ||
+        !src.days ||
+        typeof src.days !== "object")
     ) {
       return migratePayloadV2ToV3(src).data;
     }
@@ -741,6 +749,7 @@
     var spendingJars = (Array.isArray(src.spendingJars) ? src.spendingJars : []).map(
       normalizeSpendingJarRow
     );
+    dedupeFixedExpensesAllMonths(days);
     return {
       schemaVersion: DATA_SCHEMA_VERSION,
       dataUpdatedAt:
@@ -1027,7 +1036,9 @@
       if (rawV3) {
         return normalizeAppDataShape(JSON.parse(rawV3));
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn("Không đọc được dữ liệu local (family-budget-v3):", e);
+    }
     if (migrationPending) {
       return emptyV3AppData();
     }
@@ -1131,6 +1142,137 @@
     return expenseCreatedAt(e);
   }
 
+  function expenseCreatedAtTs(e) {
+    if (e && typeof e.createdAt === "number" && e.createdAt > 0) {
+      return Math.round(e.createdAt);
+    }
+    return expenseCreatedAt(e);
+  }
+
+  /** Khi trùng templateId: giữ bản gốc (createdAt cũ hơn), tránh dup auto-syncFixed vs cloud. */
+  function pickFixedExpenseKeepWinner(a, b) {
+    var aDel = isRowDeleted(a);
+    var bDel = isRowDeleted(b);
+    if (aDel !== bDel) return aDel ? b : a;
+    var aCa = expenseCreatedAtTs(a);
+    var bCa = expenseCreatedAtTs(b);
+    if (aCa !== bCa) return aCa < bCa ? a : b;
+    return expenseUpdatedAt(a) >= expenseUpdatedAt(b) ? a : b;
+  }
+
+  function dedupeFixedExpensesInList(expenses) {
+    var out = [];
+    var liveByTpl = {};
+    var tombByTpl = {};
+    (Array.isArray(expenses) ? expenses : []).forEach(function (e) {
+      var row = normalizeExpenseRow(e);
+      if (!row.templateId) {
+        out.push(row);
+        return;
+      }
+      if (isRowDeleted(row)) {
+        var prevT = tombByTpl[row.templateId];
+        if (!prevT) {
+          tombByTpl[row.templateId] = row;
+          out.push(row);
+          return;
+        }
+        if (expenseUpdatedAt(row) >= expenseUpdatedAt(prevT)) {
+          var tIdx = out.indexOf(prevT);
+          if (tIdx >= 0) out[tIdx] = row;
+          tombByTpl[row.templateId] = row;
+        }
+        return;
+      }
+      var prev = liveByTpl[row.templateId];
+      if (!prev) {
+        liveByTpl[row.templateId] = row;
+        out.push(row);
+        return;
+      }
+      var keep = pickFixedExpenseKeepWinner(prev, row);
+      if (keep === prev) return;
+      var idx = out.indexOf(prev);
+      if (idx >= 0) out[idx] = row;
+      liveByTpl[row.templateId] = row;
+    });
+    return out;
+  }
+
+  function dedupeFixedExpensesInMonthDays(days, monthKey) {
+    if (!monthKey || !days || typeof days !== "object") return;
+    var prefix = monthKey + "-";
+    var winnerByTpl = {};
+    var drop = [];
+    Object.keys(days).forEach(function (dk) {
+      if (dk.indexOf(prefix) !== 0) return;
+      var shard = days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses.forEach(function (e) {
+        if (!e || !e.templateId) return;
+        var prev = winnerByTpl[e.templateId];
+        if (!prev) {
+          winnerByTpl[e.templateId] = { dk: dk, expense: e };
+          return;
+        }
+        var keep = pickFixedExpenseKeepWinner(prev.expense, e);
+        if (keep === prev.expense) {
+          drop.push({ dk: dk, id: e.id });
+        } else {
+          drop.push({ dk: prev.dk, id: prev.expense.id });
+          winnerByTpl[e.templateId] = { dk: dk, expense: e };
+        }
+      });
+    });
+    drop.forEach(function (d) {
+      var shard = days[d.dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses = shard.expenses.filter(function (e) {
+        return e.id !== d.id;
+      });
+    });
+    Object.keys(days).forEach(function (dk) {
+      if (dk.indexOf(prefix) !== 0) return;
+      var shard = days[dk];
+      if (
+        shard &&
+        Array.isArray(shard.expenses) &&
+        shard.expenses.length === 0
+      ) {
+        delete days[dk];
+      }
+    });
+  }
+
+  function dedupeFixedExpensesAllMonths(days) {
+    var months = {};
+    Object.keys(days || {}).forEach(function (dk) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) return;
+      months[dk.slice(0, 7)] = true;
+    });
+    Object.keys(months).forEach(function (mk) {
+      dedupeFixedExpensesInMonthDays(days, mk);
+    });
+  }
+
+  function payloadHasLiveExpenses(payload) {
+    var found = false;
+    var days = (payload && payload.days) || {};
+    Object.keys(days).forEach(function (dk) {
+      if (found) return;
+      var shard = days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      var i;
+      for (i = 0; i < shard.expenses.length; i++) {
+        if (!isRowDeleted(shard.expenses[i])) {
+          found = true;
+          break;
+        }
+      }
+    });
+    return found;
+  }
+
   function fixedTemplateUpdatedAt(t) {
     if (!t || typeof t !== "object") return 0;
     var v = typeof t.updatedAt === "number" ? t.updatedAt : 0;
@@ -1205,13 +1347,71 @@
     return out;
   }
 
+  /** Gộp danh mục theo id; bên có configDataUpdatedAt mới hơn thắng khi trùng id. */
+  function mergeCategoriesByConfigTime(remote, local, rAt, lAt) {
+    var map = {};
+    (Array.isArray(remote) ? remote : []).forEach(function (c) {
+      var row = normalizeCategoryRow(c);
+      map[row.id] = { row: row, at: rAt };
+    });
+    (Array.isArray(local) ? local : []).forEach(function (c) {
+      var row = normalizeCategoryRow(c);
+      var prev = map[row.id];
+      if (!prev || lAt > prev.at) {
+        map[row.id] = { row: row, at: lAt };
+      }
+    });
+    var out = [];
+    Object.keys(map).forEach(function (id) {
+      out.push(map[id].row);
+    });
+    return out;
+  }
+
+  /**
+   * Hạn mức tháng: ưu tiên bên user đã chỉnh (incomeUserSet).
+   * needSync do thêm chi không được ghi đè hạn mức cloud.
+   */
+  function mergeMonthIncomeMeta(rm, lm) {
+    rm = rm || {};
+    lm = lm || {};
+    var rAt = rm.dataUpdatedAt || 0;
+    var lAt = lm.dataUpdatedAt || 0;
+    var ri = typeof rm.income === "number" ? rm.income : 0;
+    var li = typeof lm.income === "number" ? lm.income : 0;
+    var rUser = !!rm.incomeUserSet;
+    var lUser = !!lm.incomeUserSet;
+    if (lUser && !rUser) {
+      return { income: li, incomeUserSet: true };
+    }
+    if (rUser && !lUser) {
+      return { income: ri, incomeUserSet: true };
+    }
+    if (lUser && rUser) {
+      if (lAt >= rAt) return { income: li, incomeUserSet: true };
+      return { income: ri, incomeUserSet: true };
+    }
+    if (ri > 0 || li > 0) {
+      if (rAt >= lAt && ri > 0) return { income: ri, incomeUserSet: false };
+      if (li > 0) return { income: li, incomeUserSet: false };
+      return { income: ri, incomeUserSet: false };
+    }
+    return { income: 0, incomeUserSet: false };
+  }
+
   function mergeSpendingConfig(remote, local) {
     var rAt = remote.configDataUpdatedAt || 0;
     var lAt = local.configDataUpdatedAt || 0;
     var useLocal =
       local.configNeedSync && (lAt >= rAt || !remote.configNeedSync);
     var useRemote = remote.configNeedSync && rAt > lAt;
-    var base = useRemote ? remote : useLocal ? local : lAt >= rAt ? local : remote;
+    var settingsBase = useRemote
+      ? remote
+      : useLocal
+      ? local
+      : rAt >= lAt
+      ? remote
+      : local;
     return {
       fixedTemplates: mergeRowsById(
         remote.fixedTemplates,
@@ -1221,7 +1421,12 @@
         },
         fixedTemplateUpdatedAt
       ),
-      categories: (base.categories || []).map(normalizeCategoryRow),
+      categories: mergeCategoriesByConfigTime(
+        remote.categories,
+        local.categories,
+        rAt,
+        lAt
+      ),
       spendingJars: mergeRowsById(
         remote.spendingJars || [],
         local.spendingJars || [],
@@ -1231,7 +1436,7 @@
         jarUpdatedAt
       ).map(normalizeSpendingJarRow),
       settings: (function () {
-        var merged = normalizeSettings(base.settings);
+        var merged = normalizeSettings(settingsBase.settings);
         var rCc = normalizeCreditCardSettings((remote.settings || {}).creditCard);
         var lCc = normalizeCreditCardSettings((local.settings || {}).creditCard);
         var paid = {};
@@ -1265,14 +1470,16 @@
       };
     }
     return {
-      expenses: mergeRowsById(
-        r.expenses || [],
-        l.expenses || [],
-        function (e) {
-          return e && e.id;
-        },
-        expenseUpdatedAt
-      ).map(normalizeExpenseRow),
+      expenses: dedupeFixedExpensesInList(
+        mergeRowsById(
+          r.expenses || [],
+          l.expenses || [],
+          function (e) {
+            return e && e.id;
+          },
+          expenseUpdatedAt
+        ).map(normalizeExpenseRow)
+      ),
       dataUpdatedAt: Math.max(rAt, lAt),
       needSync: false,
     };
@@ -1378,32 +1585,35 @@
       }
       var rAt = rm.dataUpdatedAt || 0;
       var lAt = lm.dataUpdatedAt || 0;
-      var pickLocal = lm.needSync && lAt >= rAt;
+      var incomeMeta = mergeMonthIncomeMeta(rm, lm);
       merged.months[k] = {
-        income: pickLocal
-          ? lm.income
-          : typeof rm.income === "number" && rAt > lAt
-          ? rm.income
-          : typeof lm.income === "number"
-          ? lm.income
-          : 0,
-        incomeUserSet: pickLocal
-          ? !!lm.incomeUserSet
-          : rAt > lAt
-          ? !!rm.incomeUserSet
-          : !!lm.incomeUserSet,
+        income: incomeMeta.income,
+        incomeUserSet: incomeMeta.incomeUserSet,
         dataUpdatedAt: Math.max(rAt, lAt),
         needSync: false,
       };
     });
-    return finalizeMergeWithActiveMonthState(merged);
+    dedupeFixedExpensesAllMonths(merged.days);
+    return merged;
+  }
+
+  function readLocalPayloadFromDisk() {
+    try {
+      var raw = localStorage.getItem(STORAGE_V3);
+      if (!raw) return null;
+      return coercePayloadToV3(JSON.parse(raw));
+    } catch (e) {
+      return null;
+    }
   }
 
   function saveAppDataToLocal() {
     if (migrationPending) return;
     try {
       localStorage.setItem(STORAGE_V3, JSON.stringify(getAppPayload()));
-    } catch (e) {}
+    } catch (e) {
+      console.warn("Không ghi được localStorage:", e);
+    }
   }
 
   function markPendingCloudPush() {
@@ -1546,19 +1756,17 @@
    */
   function saveAppData(opts) {
     opts = opts || {};
-    if (migrationPending) return;
     if (opts.configDirty) markConfigDirty();
-    persistLocalNow();
-    if (opts.sync === false) return;
+    if (!migrationPending) persistLocalNow();
+    if (migrationPending || opts.sync === false) return;
     queueSupabaseSync(!!opts.immediateSync);
   }
 
   async function saveAppDataAsync(opts) {
     opts = opts || {};
-    if (migrationPending) return;
     if (opts.configDirty) markConfigDirty();
-    persistLocalNow();
-    if (opts.sync === false) return;
+    if (!migrationPending) persistLocalNow();
+    if (migrationPending || opts.sync === false) return;
     if (opts.immediateSync) {
       await syncToSupabaseNow();
     } else {
@@ -1700,13 +1908,17 @@
       : [];
     ensureSpendingJarsNormalized();
     normalizeAllFixedTemplates();
-    rebindActiveMonthState();
+    rebindActiveMonthState({ skipFlush: true });
   }
 
-  /** Giữ `state` trỏ đúng tháng sau khi gộp cloud (tránh ghi vào object tháng cũ). */
-  function rebindActiveMonthState() {
+  /**
+   * Giữ `state` trỏ đúng tháng sau khi gộp cloud / import.
+   * skipFlush: không ghi state cũ vào app.days (sau khi payload ngoài vừa thay thế local).
+   */
+  function rebindActiveMonthState(opts) {
+    opts = opts || {};
     if (!activeMonthKey) return;
-    flushActiveMonthIntoApp();
+    if (!opts.skipFlush) flushActiveMonthIntoApp();
     var m = app.months[activeMonthKey];
     if (!m || isMonthDeleted(m)) return;
     state = buildMonthState(activeMonthKey);
@@ -1728,8 +1940,22 @@
       if (fetchRes.data && fetchRes.data.payload) {
         isApplyingCloudSnapshot = true;
         try {
+          var remoteOnly = coercePayloadToV3(fetchRes.data.payload);
           var localPayload = getAppPayloadForSync();
-          var merged = mergePayloadForCloud(fetchRes.data.payload, localPayload);
+          if (!payloadHasLiveExpenses(localPayload)) {
+            var diskPayload = readLocalPayloadFromDisk();
+            if (payloadHasLiveExpenses(diskPayload)) {
+              localPayload = diskPayload;
+            }
+          }
+          var merged;
+          if (payloadHasLiveExpenses(localPayload)) {
+            merged = mergePayloadForCloud(fetchRes.data.payload, localPayload);
+          } else if (payloadHasLiveExpenses(remoteOnly)) {
+            merged = remoteOnly;
+          } else {
+            merged = coercePayloadToV3(localPayload);
+          }
           applyCloudMergedPayload(merged);
           setAuthSyncHint("Đã gộp dữ liệu máy + cloud.", "ok");
         } finally {
@@ -1857,7 +2083,7 @@
     supabaseUserEmail = session.user.email || "";
     var pendingPush = consumePendingCloudPush();
     if (pendingPush) {
-      await syncToSupabaseNow({ forceLocal: true });
+      await syncToSupabaseNow({ forceLocal: true, skipFlush: true });
     } else {
       await pullSupabaseStateAndRender();
       await syncToSupabaseNow();
@@ -1956,6 +2182,7 @@
   }
 
   function findCategory(id) {
+    if (!app || !Array.isArray(app.categories)) return null;
     var i;
     for (i = 0; i < app.categories.length; i++) {
       if (app.categories[i].id === id) return app.categories[i];
@@ -1979,7 +2206,10 @@
   }
 
   function getFirstCategoryId() {
-    return app.categories[0] ? app.categories[0].id : "cat-an-uong";
+    if (!app || !Array.isArray(app.categories) || !app.categories[0]) {
+      return "cat-an-uong";
+    }
+    return app.categories[0].id;
   }
 
   function dedupeJarCategoriesExclusive() {
@@ -2564,6 +2794,11 @@
       normalized && normalized.settings && normalized.settings.themeMode
     );
     migrationPending = false;
+    activeMonthKey = null;
+    state = null;
+    expenseListFilter = "all";
+    expenseListFilterDayNum = null;
+    expenseListDayGridExpanded = false;
     applyNormalizedAppData(normalized);
     app.dataUpdatedAt = nowTs();
     app.configDataUpdatedAt = nowTs();
@@ -2575,11 +2810,6 @@
       markMonthMetaDirty(mk);
     });
     app.settings.themeMode = importedTheme;
-    activeMonthKey = null;
-    state = null;
-    expenseListFilter = "all";
-    expenseListFilterDayNum = null;
-    expenseListDayGridExpanded = false;
     try {
       localStorage.removeItem(STORAGE_V1);
       localStorage.removeItem(STORAGE_V2);
@@ -2597,9 +2827,8 @@
     renderSettingsJarsList();
     renderExportMonthPicker();
     refreshSettingsDefaultLimitDisplay();
-    var nextMonth = exportableMonthKeys()[0] || currentMonthKey();
-    openMonth(nextMonth, { sync: false });
     showSettingsView();
+    return exportableMonthKeys()[0] || currentMonthKey();
   }
 
   function runDataMigration() {
@@ -2669,11 +2898,11 @@
     setMigrationModalStatus("", "");
   }
 
-  function finishAppBootstrap(initialKey) {
+  async function finishAppBootstrap(initialKey) {
     renderAuthUi();
     syncCreditCardFeatureVisibility();
-    openMonth(initialKey, { skipUrl: true });
-    initSupabaseSync(initialKey);
+    openMonth(initialKey, { skipUrl: true, sync: false, skipPersist: true });
+    await initSupabaseSync(initialKey);
   }
 
   async function wipeAllAppData() {
@@ -2754,7 +2983,7 @@
     }
     var importMeta = nextData._importMeta || {};
     delete nextData._importMeta;
-    replaceAppDataFromImport(nextData);
+    var importMonthKey = replaceAppDataFromImport(nextData);
     var importDetail =
       importMeta.format === "v2"
         ? " (file v2 → " +
@@ -2781,10 +3010,6 @@
             setTimeout(r, 40);
           });
         }
-        if (activeMonthKey) {
-          rebindActiveMonthState();
-          if (state) syncFixedIntoMonth(state, activeMonthKey);
-        }
         setSettingsDataStatus(
           "Đã import" + importDetail + " và ghi đè cloud bằng file backup này.",
           "ok"
@@ -2808,6 +3033,7 @@
         "ok"
       );
     }
+    openMonth(importMonthKey, { sync: false });
   }
 
   var URL_PARAM_THANG = "thang";
@@ -4339,25 +4565,26 @@
     };
   }
 
+  /**
+   * Gộp chi phí tháng đang mở từ UI (`pin`) vào payload đã merge.
+   * Không xóa các ngày chỉ có trên cloud — chỉ overlay từng ngày có trong pin.
+   */
   function mergePinnedActiveMonth(payload, pin) {
     if (!pin || !pin.key) return payload;
     var out = coercePayloadToV3(payload || {});
     var cur = out.months[pin.key] || {};
     var ts = nowTs();
-    out.months[pin.key] = {
-      income:
-        typeof pin.income === "number"
-          ? pin.income
-          : typeof cur.income === "number"
-          ? cur.income
-          : 0,
-      incomeUserSet:
-        pin.incomeUserSet !== undefined
-          ? !!pin.incomeUserSet
-          : cur.incomeUserSet !== undefined
-          ? !!cur.incomeUserSet
-          : false,
+    var curIncome = typeof cur.income === "number" ? cur.income : 0;
+    var pinIncome = typeof pin.income === "number" ? pin.income : 0;
+    var mergedIncomeMeta = mergeMonthIncomeMeta(cur, {
+      income: pinIncome,
+      incomeUserSet: !!pin.incomeUserSet,
       dataUpdatedAt: ts,
+    });
+    out.months[pin.key] = {
+      income: mergedIncomeMeta.income,
+      incomeUserSet: mergedIncomeMeta.incomeUserSet,
+      dataUpdatedAt: Math.max(cur.dataUpdatedAt || 0, ts),
       needSync: true,
     };
     var prefix = pin.key + "-";
@@ -4369,32 +4596,24 @@
       if (!byDay[dk]) byDay[dk] = [];
       byDay[dk].push(row);
     });
-    Object.keys(out.days || {}).forEach(function (dk) {
-      if (dk.indexOf(prefix) === 0) delete out.days[dk];
-    });
     Object.keys(byDay).forEach(function (dk) {
-      var remoteShard = payload && payload.days ? payload.days[dk] : null;
+      var existingShard = out.days[dk] || { expenses: [], dataUpdatedAt: 0 };
       out.days[dk] = {
-        expenses: mergeRowsById(
-          remoteShard && remoteShard.expenses ? remoteShard.expenses : [],
-          byDay[dk],
-          function (ex) {
-            return ex && ex.id;
-          },
-          expenseUpdatedAt
-        ).map(normalizeExpenseRow),
-        dataUpdatedAt: ts,
+        expenses: dedupeFixedExpensesInList(
+          mergeRowsById(
+            existingShard.expenses || [],
+            byDay[dk],
+            function (ex) {
+              return ex && ex.id;
+            },
+            expenseUpdatedAt
+          ).map(normalizeExpenseRow)
+        ),
+        dataUpdatedAt: Math.max(existingShard.dataUpdatedAt || 0, ts),
         needSync: true,
       };
     });
     return out;
-  }
-
-  /** Sau merge cloud, luôn gộp lại danh sách chi đang hiển thị (`state`). */
-  function finalizeMergeWithActiveMonthState(merged) {
-    if (!activeMonthKey || !state) return merged;
-    flushActiveMonthIntoApp();
-    return mergePinnedActiveMonth(merged, pinActiveMonthSnapshot());
   }
 
   function syncFixedIntoMonth(m, monthKey) {
@@ -6379,7 +6598,7 @@
   }
 
   function refreshMonthUiAfterCloudMerge() {
-    rebindActiveMonthState();
+    rebindActiveMonthState({ skipFlush: true });
     if (state && activeMonthKey) {
       state.expenses = state.expenses.map(normalizeExpenseRow);
       syncFixedIntoMonth(state, activeMonthKey);
@@ -6928,7 +7147,11 @@
     updateAmountPreview(elAmount, elExpensePreview);
     resetAddExpenseDateInput();
 
-    persistAndRender(opts.sync === false ? { sync: false } : undefined);
+    if (opts.skipPersist) {
+      renderAllViews();
+    } else {
+      persistAndRender(opts.sync === false ? { sync: false } : undefined);
+    }
 
     if (!opts.fromPop && !opts.skipUrl) {
       syncUrlToMonth(key);
@@ -6939,6 +7162,13 @@
     if (!activeMonthKey || !state || !elIncome) return;
     if (!isLimitEditOpen()) return;
     applyLimitEditAndClose(false);
+  }
+
+  /** Ghi state → localStorage trước khi đóng tab / ẩn trang (offline hoặc đang sync). */
+  function persistBeforePageExit() {
+    flushIncomeFromField();
+    if (migrationPending || isApplyingCloudSnapshot) return;
+    if (activeMonthKey && state) persistLocalNow();
   }
 
   elIncome.addEventListener("input", function () {
@@ -6984,9 +7214,9 @@
     openMonth(key, { fromPop: true, skipUrl: true });
   });
 
-  window.addEventListener("pagehide", flushIncomeFromField);
+  window.addEventListener("pagehide", persistBeforePageExit);
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "hidden") flushIncomeFromField();
+    if (document.visibilityState === "hidden") persistBeforePageExit();
   });
 
   bindExpenseNameSuggestions(expenseNameSuggestCtxAdd);
@@ -7042,7 +7272,6 @@
       row.monthEdited = true;
     }
     if (elExpenseCreditCard && elExpenseCreditCard.checked) row.isCreditCard = true;
-    flushActiveMonthIntoApp();
     state.expenses.push(row);
     touchLocalData();
     var rowDayKey = dayKeyFromTs(expenseDateTs(row));
@@ -7054,7 +7283,11 @@
     resetAddExpenseDateInput();
     if (elExpenseFixed) elExpenseFixed.checked = false;
     if (elExpenseCreditCard) elExpenseCreditCard.checked = false;
-    await persistAndRenderAsync({ immediateSync: true });
+    persistLocalNow();
+    await persistAndRenderAsync({
+      immediateSync: true,
+      sync: supabaseEnabled,
+    });
     scrollAndHighlightExpenseRow(row.id);
   }
 
@@ -7272,7 +7505,7 @@
           setMigrationModalStatus(msg, "ok");
           hideMigrationModal();
           var bootKey = currentMonthKey();
-          finishAppBootstrap(bootKey);
+          void finishAppBootstrap(bootKey);
           renderExportMonthPicker();
           renderAllViews();
           if (supabaseEnabled && supabaseClient) {
@@ -7861,7 +8094,7 @@
   if (migrationPending) {
     showMigrationModal();
   } else {
-    finishAppBootstrap(initialKey);
+    void finishAppBootstrap(initialKey);
   }
 
   document.addEventListener("visibilitychange", function () {
@@ -7884,6 +8117,7 @@
     if (ev.persisted) resumeCloudSyncFromBackground();
   });
   window.addEventListener("pagehide", function () {
+    persistBeforePageExit();
     if (supabaseEnabled && supabaseClient) {
       if (cloudSyncTimer) {
         clearTimeout(cloudSyncTimer);
