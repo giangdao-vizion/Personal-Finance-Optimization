@@ -3431,8 +3431,30 @@
     updateModalOpenBodyLock();
   }
 
-  function fillCategorySelect(el) {
+  /** Chữ ký danh sách danh mục — dùng tránh rebuild `<select>` khi sync không đổi config. */
+  function categoriesUiSignature(cats) {
+    if (!Array.isArray(cats)) return "";
+    return cats
+      .map(function (c) {
+        return (
+          (c && c.id ? c.id : "") +
+          "\t" +
+          (c && c.label ? c.label : "") +
+          "\t" +
+          (c && c.iconId ? c.iconId : "")
+        );
+      })
+      .join("\n");
+  }
+
+  var lastCategoriesUiSignature = "";
+
+  function fillCategorySelect(el, selectedValue) {
     if (!el) return;
+    var prev =
+      selectedValue !== undefined && selectedValue !== null
+        ? selectedValue
+        : el.value;
     el.innerHTML = "";
     app.categories.forEach(function (c) {
       var opt = document.createElement("option");
@@ -3440,13 +3462,24 @@
       opt.textContent = iconIdToSym(c.iconId) + "  " + c.label;
       el.appendChild(opt);
     });
+    if (prev && categoryIdExists(prev)) {
+      el.value = prev;
+    }
   }
 
-  function refreshAllCategorySelects() {
+  /** Cập nhật dropdown danh mục; bỏ qua nếu list không đổi (trừ khi force). */
+  function refreshAllCategorySelects(force) {
+    var sig = categoriesUiSignature(app.categories);
+    if (!force && sig === lastCategoriesUiSignature) return;
+    lastCategoriesUiSignature = sig;
+    var editExpenseCat =
+      editingExpenseId && elEditExpenseCategory ? elEditExpenseCategory.value : undefined;
+    var editFixedCat =
+      editingFixedTemplateId && elEditFixedCategory ? elEditFixedCategory.value : undefined;
     fillCategorySelect(elCategory);
     fillCategorySelect(elSettingsAddFixedCategory);
-    fillCategorySelect(elEditFixedCategory);
-    fillCategorySelect(elEditExpenseCategory);
+    fillCategorySelect(elEditFixedCategory, editFixedCat);
+    fillCategorySelect(elEditExpenseCategory, editExpenseCat);
   }
 
   function piggyBankUseSvg(color, size) {
@@ -6588,12 +6621,48 @@
     }, 2000);
   }
 
+  function isExpenseEditDialogOpen() {
+    return !!(editingExpenseId && elEditDialog && !elEditDialog.hidden);
+  }
+
+  /** Giữ draft form sửa chi khi cloud/realtime refresh danh mục. */
+  function captureEditExpenseFormDraft() {
+    if (!isExpenseEditDialogOpen()) return null;
+    return {
+      category: elEditExpenseCategory ? elEditExpenseCategory.value : "",
+      name: elEditExpenseName ? elEditExpenseName.value : "",
+      amount: elEditAmount ? elEditAmount.value : "",
+      date: elEditExpenseDate ? elEditExpenseDate.value : "",
+      time: elEditExpenseTime ? elEditExpenseTime.value : "",
+      fixed: elEditExpenseFixed ? elEditExpenseFixed.checked : false,
+      creditCard: elEditExpenseCreditCard ? elEditExpenseCreditCard.checked : false,
+    };
+  }
+
+  function restoreEditExpenseFormDraft(draft) {
+    if (!draft || !isExpenseEditDialogOpen()) return;
+    if (elEditExpenseCategory && draft.category && categoryIdExists(draft.category)) {
+      elEditExpenseCategory.value = draft.category;
+    }
+    if (elEditExpenseName) elEditExpenseName.value = draft.name;
+    if (elEditAmount) {
+      elEditAmount.value = draft.amount;
+      updateAmountPreview(elEditAmount, elEditAmountPreview);
+    }
+    if (elEditExpenseDate) elEditExpenseDate.value = draft.date;
+    if (elEditExpenseTime) elEditExpenseTime.value = draft.time;
+    if (elEditExpenseFixed) elEditExpenseFixed.checked = !!draft.fixed;
+    if (elEditExpenseCreditCard) elEditExpenseCreditCard.checked = !!draft.creditCard;
+  }
+
   function applyCloudMergedPayload(merged) {
+    var editDraft = captureEditExpenseFormDraft();
     applyNormalizedAppData(merged);
     saveAppDataToLocal();
     applyThemeSettings();
     refreshAllCategorySelects();
     refreshMonthUiAfterCloudMerge();
+    restoreEditExpenseFormDraft(editDraft);
     lastSyncedPayload = wirePayloadSignature(getAppPayloadForSync());
   }
 
@@ -8063,10 +8132,7 @@
     });
   }
 
-  fillCategorySelect(elCategory);
-  fillCategorySelect(elSettingsAddFixedCategory);
-  fillCategorySelect(elEditFixedCategory);
-  fillCategorySelect(elEditExpenseCategory);
+  refreshAllCategorySelects(true);
   bindAmountPreview(elIncome, elIncomePreview);
   bindAmountPreview(elAmount, elExpensePreview);
   bindAmountPreview(elEditAmount, elEditAmountPreview);
