@@ -1423,8 +1423,9 @@
   }
 
   /**
-   * @param {{ forceLocal?: boolean }} [opts]
+   * @param {{ forceLocal?: boolean, skipFlush?: boolean }} [opts]
    * forceLocal: ghi đè cloud bằng payload local (sau import backup đầy đủ).
+   * skipFlush: không ghi state tháng đang mở vào app.days trước sync (dùng sau import).
    */
   async function syncToSupabaseNow(opts) {
     opts = opts || {};
@@ -1439,13 +1440,14 @@
       var mergedPayload;
       var remotePayload = null;
       var forceLocal = !!opts.forceLocal;
+      var skipFlush = !!opts.skipFlush;
       try {
         var remoteRes = await supabaseClient
           .from(SUPABASE_TABLE)
           .select("payload")
           .eq("id", SUPABASE_STATE_ID)
           .maybeSingle();
-        var localPayload = getAppPayloadForSync();
+        var localPayload = skipFlush ? getAppPayload() : getAppPayloadForSync();
         if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
           remotePayload = remoteRes.data.payload;
         }
@@ -1457,7 +1459,9 @@
           mergedPayload = coercePayloadToV3(localPayload);
         }
       } catch (eRemote) {
-        mergedPayload = coercePayloadToV3(getAppPayloadForSync());
+        mergedPayload = coercePayloadToV3(
+          skipFlush ? getAppPayload() : getAppPayloadForSync()
+        );
       }
       var mergedSig = wirePayloadSignature(mergedPayload);
       var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
@@ -1505,7 +1509,10 @@
   function mergeSyncOpts(a, b) {
     if (!a) return b || {};
     if (!b) return a || {};
-    return { forceLocal: !!(a.forceLocal || b.forceLocal) };
+    return {
+      forceLocal: !!(a.forceLocal || b.forceLocal),
+      skipFlush: !!(a.skipFlush || b.skipFlush),
+    };
   }
 
   function queueSupabaseSync(immediate) {
@@ -2570,6 +2577,9 @@
     app.settings.themeMode = importedTheme;
     activeMonthKey = null;
     state = null;
+    expenseListFilter = "all";
+    expenseListFilterDayNum = null;
+    expenseListDayGridExpanded = false;
     try {
       localStorage.removeItem(STORAGE_V1);
       localStorage.removeItem(STORAGE_V2);
@@ -2588,7 +2598,7 @@
     renderExportMonthPicker();
     refreshSettingsDefaultLimitDisplay();
     var nextMonth = exportableMonthKeys()[0] || currentMonthKey();
-    openMonth(nextMonth, { skipUrl: true, sync: false });
+    openMonth(nextMonth, { sync: false });
     showSettingsView();
   }
 
@@ -2760,7 +2770,21 @@
     if (supabaseEnabled && supabaseClient) {
       lastSyncedPayload = "";
       try {
-        await syncToSupabaseNow({ forceLocal: true });
+        while (syncInFlight) {
+          await new Promise(function (r) {
+            setTimeout(r, 40);
+          });
+        }
+        await syncToSupabaseNow({ forceLocal: true, skipFlush: true });
+        while (syncInFlight || syncPending) {
+          await new Promise(function (r) {
+            setTimeout(r, 40);
+          });
+        }
+        if (activeMonthKey) {
+          rebindActiveMonthState();
+          if (state) syncFixedIntoMonth(state, activeMonthKey);
+        }
         setSettingsDataStatus(
           "Đã import" + importDetail + " và ghi đè cloud bằng file backup này.",
           "ok"
