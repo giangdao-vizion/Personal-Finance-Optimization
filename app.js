@@ -1195,8 +1195,10 @@
   var syncPending = false;
   var syncPendingOpts = null;
   var cloudPollTimer = null;
-  /** Poll cloud khi Realtime ngắt (hay gặp trên iPhone/PWA). */
-  var CLOUD_POLL_MS = 8000;
+  /** Poll cloud định kỳ + khi Realtime ngắt. */
+  var CLOUD_POLL_MS = 30000;
+  /** Tombstone > 1 tuần: không gửi lên cloud (vẫn giữ local nếu cần). */
+  var DELETED_TOMBSTONE_CLOUD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
   function touchLocalData() {
     /* giữ hook cho telemetry / guard tương lai */
@@ -1238,8 +1240,147 @@
     return Date.now();
   }
 
+  /** Soft-delete: chỉ giữ id + isDeleted + deletedAt. */
+  function expenseTombstone(id, deletedAt) {
+    return {
+      id: id,
+      isDeleted: true,
+      deletedAt:
+        typeof deletedAt === "number" && deletedAt > 0
+          ? Math.round(deletedAt)
+          : nowTs(),
+    };
+  }
+
+  function expenseIdExistsInDays(id, days) {
+    if (!id || !days || typeof days !== "object") return false;
+    var found = false;
+    Object.keys(days).forEach(function (dk) {
+      if (found) return;
+      var shard = days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      var i;
+      for (i = 0; i < shard.expenses.length; i++) {
+        if (shard.expenses[i] && shard.expenses[i].id === id) {
+          found = true;
+          break;
+        }
+      }
+    });
+    return found;
+  }
+
+  /**
+   * Gộp 2 bản cùng expense id: xoá thắng sửa; cả hai xoá → giữ deletedAt mới hơn.
+   */
+  function mergeExpenseRowForCloud(remote, local) {
+    var r = remote || {};
+    var l = local || {};
+    var rDel = isRowDeleted(r);
+    var lDel = isRowDeleted(l);
+    var id = r.id || l.id;
+    if (rDel && !lDel) {
+      return expenseTombstone(id, r.deletedAt || nowTs());
+    }
+    if (!rDel && lDel) {
+      return expenseTombstone(id, l.deletedAt || nowTs());
+    }
+    if (rDel && lDel) {
+      return expenseTombstone(id, Math.max(r.deletedAt || 0, l.deletedAt || 0) || nowTs());
+    }
+    return expenseUpdatedAt(r) >= expenseUpdatedAt(l) ? r : l;
+  }
+
+  function mergeExpenseRowsForCloud(remoteRows, localRows, categoriesCtx) {
+    var map = {};
+    var norm = function (e) {
+      return normalizeExpenseRow(e, categoriesCtx);
+    };
+    (remoteRows || []).forEach(function (e) {
+      if (!e || !e.id) return;
+      map[e.id] = norm(e);
+    });
+    (localRows || []).forEach(function (e) {
+      if (!e || !e.id) return;
+      var prev = map[e.id];
+      map[e.id] = prev ? norm(mergeExpenseRowForCloud(prev, e)) : norm(e);
+    });
+    return dedupeFixedExpensesInList(
+      Object.keys(map).map(function (id) {
+        return map[id];
+      })
+    );
+  }
+
+  /** Tombstone cloud mà local chưa từng có → bỏ (không lưu xuống máy). */
+  function filterIncomingCloudTombstones(days, localDays) {
+    if (!days || typeof days !== "object") return;
+    Object.keys(days).forEach(function (dk) {
+      var shard = days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses = shard.expenses.filter(function (e) {
+        if (!isRowDeleted(e)) return true;
+        return expenseIdExistsInDays(e.id, localDays);
+      });
+      if (shard.expenses.length === 0) delete days[dk];
+    });
+  }
+
+  /** Bỏ tombstone > 1 tuần khỏi payload upload cloud. */
+  function prunePayloadForCloudUpload(payload) {
+    var p = coercePayloadToV3(payload || {});
+    var cutoff = nowTs() - DELETED_TOMBSTONE_CLOUD_MAX_AGE_MS;
+    Object.keys(p.days || {}).forEach(function (dk) {
+      var shard = p.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses = shard.expenses.filter(function (e) {
+        if (!isRowDeleted(e)) return true;
+        return (e.deletedAt || 0) > cutoff;
+      });
+      if (shard.expenses.length === 0) delete p.days[dk];
+    });
+    return p;
+  }
+
+  function getLocalPayloadForCloudMerge(skipFlush) {
+    if (!skipFlush) flushActiveMonthIntoApp();
+    dedupeExpensesAcrossDays(app.days);
+    return getAppPayload();
+  }
+
+  function applyExpenseTombstone(id) {
+    if (!id) return false;
+    var tomb = expenseTombstone(id, nowTs());
+    var found = false;
+    forEachExpenseInApp(function (e, dk) {
+      if (!e || e.id !== id) return;
+      var shard = app.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      var i;
+      for (i = 0; i < shard.expenses.length; i++) {
+        if (shard.expenses[i] && shard.expenses[i].id === id) {
+          shard.expenses[i] = tomb;
+          markDayDirty(dk);
+          found = true;
+        }
+      }
+    });
+    if (state && Array.isArray(state.expenses)) {
+      state.expenses = state.expenses.map(function (e) {
+        if (e && e.id === id) {
+          found = true;
+          return tomb;
+        }
+        return e;
+      });
+    }
+    if (found) dedupeExpensesAcrossDays(app.days);
+    return found;
+  }
+
   function expenseUpdatedAt(e) {
     if (!e || typeof e !== "object") return 0;
+    if (isRowDeleted(e)) return e.deletedAt || 0;
     var v = typeof e.updatedAt === "number" ? e.updatedAt : 0;
     if (v > 0) return v;
     return expenseCreatedAt(e);
@@ -1252,16 +1393,20 @@
     return expenseCreatedAt(e);
   }
 
-  /** Cùng expense id ở nhiều ngày (sau đổi ngày + sync): giữ bản updatedAt mới nhất. */
+  /** Cùng expense id ở nhiều ngày: xoá thắng; còn lại giữ updatedAt mới hơn. */
   function pickExpenseKeepWinner(a, b) {
     if (!a) return b;
     if (!b) return a;
+    var aDel = isRowDeleted(a);
+    var bDel = isRowDeleted(b);
+    if (aDel && !bDel) return a;
+    if (!aDel && bDel) return b;
+    if (aDel && bDel) {
+      return (a.deletedAt || 0) >= (b.deletedAt || 0) ? a : b;
+    }
     var aAt = expenseUpdatedAt(a);
     var bAt = expenseUpdatedAt(b);
     if (aAt !== bAt) return aAt > bAt ? a : b;
-    if (isRowDeleted(a) !== isRowDeleted(b)) {
-      return isRowDeleted(a) ? a : b;
-    }
     return a;
   }
 
@@ -1310,7 +1455,11 @@
   function pickFixedExpenseKeepWinner(a, b) {
     var aDel = isRowDeleted(a);
     var bDel = isRowDeleted(b);
-    if (aDel !== bDel) return aDel ? b : a;
+    if (aDel && !bDel) return a;
+    if (!aDel && bDel) return b;
+    if (aDel && bDel) {
+      return (a.deletedAt || 0) >= (b.deletedAt || 0) ? a : b;
+    }
     var aCa = expenseCreatedAtTs(a);
     var bCa = expenseCreatedAtTs(b);
     if (aCa !== bCa) return aCa < bCa ? a : b;
@@ -1448,7 +1597,11 @@
   }
 
   function isRowDeleted(row) {
-    return !!(row && typeof row.deletedAt === "number" && row.deletedAt > 0);
+    return !!(
+      row &&
+      (row.isDeleted === true ||
+        (typeof row.deletedAt === "number" && row.deletedAt > 0))
+    );
   }
 
   function isMonthDeleted(m) {
@@ -1631,16 +1784,7 @@
       return { expenses: rExp.map(norm), dataUpdatedAt: rAt, needSync: false };
     }
     return {
-      expenses: dedupeFixedExpensesInList(
-        mergeRowsById(
-          rExp,
-          lExp,
-          function (e) {
-            return e && e.id;
-          },
-          expenseUpdatedAt
-        ).map(norm)
-      ),
+      expenses: mergeExpenseRowsForCloud(rExp, lExp, categoriesCtx),
       dataUpdatedAt: Math.max(rAt, lAt),
       needSync: false,
     };
@@ -1670,6 +1814,7 @@
   function mergePayloadForCloud(remotePayload, localPayload) {
     var remote = coercePayloadToV3(remotePayload || {});
     var local = coercePayloadToV3(localPayload || {});
+    var localDaysBefore = local.days || {};
     var cfg = mergeSpendingConfig(remote, local);
     var categoriesCtx = categoriesWithExpenseOrphans(
       cfg.categories,
@@ -1761,6 +1906,7 @@
     });
     dedupeFixedExpensesAllMonths(merged.days);
     dedupeExpensesAcrossDays(merged.days);
+    filterIncomingCloudTombstones(merged.days, localDaysBefore);
     return merged;
   }
 
@@ -1824,7 +1970,7 @@
           .select("payload")
           .eq("id", SUPABASE_STATE_ID)
           .maybeSingle();
-        var localPayload = skipFlush ? getAppPayload() : getAppPayloadForSync();
+        var localPayload = getLocalPayloadForCloudMerge(!skipFlush);
         if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
           remotePayload = remoteRes.data.payload;
         }
@@ -1836,10 +1982,9 @@
           mergedPayload = coercePayloadToV3(localPayload);
         }
       } catch (eRemote) {
-        mergedPayload = coercePayloadToV3(
-          skipFlush ? getAppPayload() : getAppPayloadForSync()
-        );
+        mergedPayload = coercePayloadToV3(getLocalPayloadForCloudMerge(!skipFlush));
       }
+      mergedPayload = prunePayloadForCloudUpload(mergedPayload);
       var mergedSig = wirePayloadSignature(mergedPayload);
       var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
       if (!forceLocal && mergedSig && mergedSig === remoteSig) {
@@ -1860,10 +2005,14 @@
         } catch (e2) {
           lastSyncedPayload = "";
         }
-        applyNormalizedAppData(mergedPayload);
-        clearAllSyncFlagsOnApp();
-        saveAppDataToLocal();
-        refreshMonthUiAfterCloudMerge();
+        if (opts.pullAfter) {
+          await pullSupabaseStateAndRender();
+        } else {
+          applyNormalizedAppData(mergedPayload);
+          clearAllSyncFlagsOnApp();
+          saveAppDataToLocal();
+          refreshMonthUiAfterCloudMerge();
+        }
         setAuthSyncHint(
           forceLocal ? "Đã ghi đè cloud bằng dữ liệu trên máy này." : "Đã lưu lên cloud.",
           "ok"
@@ -1889,6 +2038,7 @@
     return {
       forceLocal: !!(a.forceLocal || b.forceLocal),
       skipFlush: !!(a.skipFlush || b.skipFlush),
+      pullAfter: !!(a.pullAfter || b.pullAfter),
     };
   }
 
@@ -1898,13 +2048,14 @@
       clearTimeout(cloudSyncTimer);
       cloudSyncTimer = null;
     }
+    var syncOpts = { pullAfter: true };
     if (immediate) {
-      void syncToSupabaseNow();
+      void syncToSupabaseNow(syncOpts);
       return;
     }
     cloudSyncTimer = setTimeout(function () {
       cloudSyncTimer = null;
-      syncToSupabaseNow();
+      void syncToSupabaseNow(syncOpts);
     }, 350);
   }
 
@@ -1936,7 +2087,7 @@
     if (!migrationPending) persistLocalNow();
     if (migrationPending || opts.sync === false) return;
     if (opts.immediateSync) {
-      await syncToSupabaseNow();
+      await syncToSupabaseNow({ pullAfter: true });
     } else {
       queueSupabaseSync(false);
     }
@@ -2177,7 +2328,7 @@
         isApplyingCloudSnapshot = false;
       }
       lastSyncedPayload = "";
-      await syncToSupabaseNow();
+      await syncToSupabaseNow({ pullAfter: true });
       setAuthSyncHint("Đã đồng bộ hai chiều (gộp + lưu cloud).", "ok");
     } catch (e) {
       console.warn("manualCloudSync:", e);
@@ -2254,7 +2405,7 @@
       await syncToSupabaseNow({ forceLocal: true, skipFlush: true });
     } else {
       await pullSupabaseStateAndRender();
-      await syncToSupabaseNow();
+      await syncToSupabaseNow({ pullAfter: false });
     }
     attachSupabaseRealtime();
     startCloudPoll();
@@ -2278,10 +2429,7 @@
   function resumeCloudSyncFromBackground() {
     if (!supabaseEnabled || !supabaseClient) return;
     attachSupabaseRealtime();
-    void (async function () {
-      await syncToSupabaseNow();
-      await pullSupabaseStateAndRender();
-    })();
+    void syncToSupabaseNow({ pullAfter: true });
   }
 
   function createSupabaseClientIfNeeded() {
@@ -4721,6 +4869,9 @@
   }
 
   function normalizeExpenseRow(row, categoriesOpt) {
+    if (isRowDeleted(row)) {
+      return expenseTombstone(row && row.id ? row.id : uid(), row && row.deletedAt);
+    }
     var cat = row && row.category;
     if (cat === "con-cai") cat = "con-nhim";
     var cats = categoriesOpt;
@@ -4755,9 +4906,6 @@
     }
     if (row.templateId) o.templateId = row.templateId;
     if (row.monthEdited) o.monthEdited = true;
-    if (typeof row.deletedAt === "number" && row.deletedAt > 0) {
-      o.deletedAt = Math.round(row.deletedAt);
-    }
     if (row.isCreditCard) o.isCreditCard = true;
     return o;
   }
@@ -6905,25 +7053,7 @@
 
   function removeExpense(id) {
     if (!id) return;
-    var delTs = nowTs();
-    var found = false;
-    forEachExpenseInApp(function (e, dk) {
-      if (!e || e.id !== id) return;
-      e.deletedAt = delTs;
-      e.updatedAt = delTs;
-      markDayDirty(dk);
-      found = true;
-    });
-    if (state && Array.isArray(state.expenses)) {
-      state.expenses.forEach(function (e) {
-        if (e && e.id === id) {
-          e.deletedAt = delTs;
-          e.updatedAt = delTs;
-          found = true;
-        }
-      });
-    }
-    if (!found) return;
+    if (!applyExpenseTombstone(id)) return;
     persistAndRender({ immediateSync: true });
   }
 
