@@ -810,6 +810,7 @@
       normalizeSpendingJarRow
     );
     dedupeFixedExpensesAllMonths(days);
+    dedupeExpensesAcrossDays(days);
     return {
       schemaVersion: DATA_SCHEMA_VERSION,
       dataUpdatedAt:
@@ -955,31 +956,73 @@
   function getMonthExpenses(monthKey) {
     if (!monthKey || !app.days) return [];
     var prefix = monthKey + "-";
-    var out = [];
+    var byId = {};
+    var noId = [];
     Object.keys(app.days).forEach(function (dk) {
       if (dk.indexOf(prefix) !== 0) return;
       var shard = app.days[dk];
       if (!shard || !Array.isArray(shard.expenses)) return;
       shard.expenses.forEach(function (e) {
-        out.push(e);
+        if (!e) return;
+        if (!e.id) {
+          noId.push(e);
+          return;
+        }
+        var prev = byId[e.id];
+        byId[e.id] = prev ? pickExpenseKeepWinner(prev, e) : e;
       });
     });
-    return out;
+    var out = Object.keys(byId).map(function (id) {
+      return byId[id];
+    });
+    return out.concat(noId);
+  }
+
+  function purgeExpenseIdsFromOtherDays(assignments) {
+    if (!assignments || !app.days) return;
+    Object.keys(app.days).forEach(function (dk) {
+      var shard = app.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      var changed = false;
+      var next = shard.expenses.filter(function (e) {
+        if (!e || !e.id) return true;
+        var targetDk = assignments[e.id];
+        if (!targetDk || targetDk === dk) return true;
+        changed = true;
+        return false;
+      });
+      if (changed) {
+        shard.expenses = next;
+        shard.dataUpdatedAt = nowTs();
+        shard.needSync = true;
+        if (shard.expenses.length === 0) delete app.days[dk];
+      }
+    });
   }
 
   function flushExpensesToDays(monthKey, expenses) {
     if (!monthKey) return;
     var prefix = monthKey + "-";
-    Object.keys(app.days || {}).forEach(function (dk) {
-      if (dk.indexOf(prefix) === 0) delete app.days[dk];
-    });
-    var byDay = {};
+    var byId = {};
     (expenses || []).forEach(function (e) {
       var row = normalizeExpenseRow(e);
+      if (!row.id) return;
+      var prev = byId[row.id];
+      byId[row.id] = prev ? pickExpenseKeepWinner(prev, row) : row;
+    });
+    var byDay = {};
+    var assignments = {};
+    Object.keys(byId).forEach(function (id) {
+      var row = byId[id];
       var dk = expenseDayKeyFromRow(row);
       if (!dk || dk.indexOf(prefix) !== 0) dk = monthKey + "-01";
       if (!byDay[dk]) byDay[dk] = [];
       byDay[dk].push(row);
+      assignments[id] = dk;
+    });
+    purgeExpenseIdsFromOtherDays(assignments);
+    Object.keys(app.days || {}).forEach(function (dk) {
+      if (dk.indexOf(prefix) === 0) delete app.days[dk];
     });
     Object.keys(byDay).forEach(function (dk) {
       var shard = ensureDayShard(dk);
@@ -1207,6 +1250,60 @@
       return Math.round(e.createdAt);
     }
     return expenseCreatedAt(e);
+  }
+
+  /** Cùng expense id ở nhiều ngày (sau đổi ngày + sync): giữ bản updatedAt mới nhất. */
+  function pickExpenseKeepWinner(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    var aAt = expenseUpdatedAt(a);
+    var bAt = expenseUpdatedAt(b);
+    if (aAt !== bAt) return aAt > bAt ? a : b;
+    if (isRowDeleted(a) !== isRowDeleted(b)) {
+      return isRowDeleted(a) ? a : b;
+    }
+    return a;
+  }
+
+  /**
+   * Mỗi expense id chỉ được ở một day shard (tránh dup khi đổi ngày / merge cloud).
+   */
+  function dedupeExpensesAcrossDays(days) {
+    if (!days || typeof days !== "object") return;
+    var winnerById = {};
+    var drop = [];
+    Object.keys(days).forEach(function (dk) {
+      var shard = days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses.forEach(function (e) {
+        if (!e || !e.id) return;
+        var prev = winnerById[e.id];
+        if (!prev) {
+          winnerById[e.id] = { dk: dk, expense: e };
+          return;
+        }
+        var keep = pickExpenseKeepWinner(prev.expense, e);
+        if (keep === prev.expense) {
+          drop.push({ dk: dk, id: e.id });
+        } else {
+          drop.push({ dk: prev.dk, id: prev.expense.id });
+          winnerById[e.id] = { dk: dk, expense: e };
+        }
+      });
+    });
+    drop.forEach(function (d) {
+      var shard = days[d.dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      shard.expenses = shard.expenses.filter(function (e) {
+        return e.id !== d.id;
+      });
+    });
+    Object.keys(days).forEach(function (dk) {
+      var shard = days[dk];
+      if (shard && Array.isArray(shard.expenses) && shard.expenses.length === 0) {
+        delete days[dk];
+      }
+    });
   }
 
   /** Khi trùng templateId: giữ bản gốc (createdAt cũ hơn), tránh dup auto-syncFixed vs cloud. */
@@ -1663,6 +1760,7 @@
       };
     });
     dedupeFixedExpensesAllMonths(merged.days);
+    dedupeExpensesAcrossDays(merged.days);
     return merged;
   }
 
@@ -1814,6 +1912,7 @@
   function persistLocalNow() {
     touchLocalData();
     flushActiveMonthIntoApp();
+    dedupeExpensesAcrossDays(app.days);
     bumpDataRevision();
     saveAppDataToLocal();
   }
@@ -6805,14 +6904,26 @@
   }
 
   function removeExpense(id) {
-    if (!state) return;
-    var e = state.expenses.find(function (x) {
-      return x.id === id;
-    });
-    if (!e) return;
+    if (!id) return;
     var delTs = nowTs();
-    e.deletedAt = delTs;
-    e.updatedAt = delTs;
+    var found = false;
+    forEachExpenseInApp(function (e, dk) {
+      if (!e || e.id !== id) return;
+      e.deletedAt = delTs;
+      e.updatedAt = delTs;
+      markDayDirty(dk);
+      found = true;
+    });
+    if (state && Array.isArray(state.expenses)) {
+      state.expenses.forEach(function (e) {
+        if (e && e.id === id) {
+          e.deletedAt = delTs;
+          e.updatedAt = delTs;
+          found = true;
+        }
+      });
+    }
+    if (!found) return;
     persistAndRender({ immediateSync: true });
   }
 
