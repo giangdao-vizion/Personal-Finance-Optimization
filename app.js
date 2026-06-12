@@ -672,10 +672,70 @@
     };
   }
 
-  function normalizeDayShard(raw) {
+  function categoryIdExistsIn(id, categories) {
+    if (!id || typeof id !== "string") return false;
+    var list = categories;
+    if (!list) {
+      if (!app || !Array.isArray(app.categories)) return false;
+      list = app.categories;
+    }
+    var i;
+    for (i = 0; i < list.length; i++) {
+      if (list[i].id === id) return true;
+    }
+    return false;
+  }
+
+  function getFirstCategoryIdFrom(categories) {
+    var list = categories;
+    if (!list) {
+      if (!app || !Array.isArray(app.categories) || !app.categories[0]) {
+        return "cat-an-uong";
+      }
+      return app.categories[0].id;
+    }
+    if (!list[0]) return "cat-an-uong";
+    return list[0].id;
+  }
+
+  /** Gộp danh mục config + mọi category id đang được khoản chi tham chiếu (tránh remap khi sync). */
+  function categoriesWithExpenseOrphans(baseCategories) {
+    var map = {};
+    var i;
+    for (i = 1; i < arguments.length; i++) {
+      var days = arguments[i];
+      if (!days || typeof days !== "object") continue;
+      Object.keys(days).forEach(function (dk) {
+        var shard = days[dk];
+        if (!shard || !Array.isArray(shard.expenses)) return;
+        shard.expenses.forEach(function (e) {
+          if (!e || isRowDeleted(e)) return;
+          var id = e.category;
+          if (id === "con-cai") id = "con-nhim";
+          if (!id || typeof id !== "string" || map[id]) return;
+          map[id] = {
+            id: id,
+            label: LEGACY_CATEGORY_LABELS[id] || id,
+            iconId: "pin",
+          };
+        });
+      });
+    }
+    (baseCategories || []).forEach(function (c) {
+      var row = normalizeCategoryRow(c);
+      map[row.id] = row;
+    });
+    return Object.keys(map).map(function (id) {
+      return map[id];
+    });
+  }
+
+  function normalizeDayShard(raw, categoriesOpt) {
     var row = raw && typeof raw === "object" ? raw : {};
     var expenses = Array.isArray(row.expenses)
-      ? row.expenses.map(normalizeExpenseRow)
+      ? row.expenses.map(function (e) {
+          return normalizeExpenseRow(e, categoriesOpt);
+        })
       : [];
     return {
       expenses: expenses,
@@ -1454,31 +1514,35 @@
     };
   }
 
-  function mergeDayShard(remoteShard, localShard) {
+  function mergeDayShard(remoteShard, localShard, categoriesCtx) {
     var r = remoteShard || { expenses: [], dataUpdatedAt: 0, needSync: false };
     var l = localShard || { expenses: [], dataUpdatedAt: 0, needSync: false };
     var rAt = r.dataUpdatedAt || 0;
     var lAt = l.dataUpdatedAt || 0;
-    if (!l.needSync && rAt <= lAt && !r.expenses.length && l.expenses.length) {
-      return { expenses: l.expenses, dataUpdatedAt: lAt, needSync: false };
+    var rExp = r.expenses || [];
+    var lExp = l.expenses || [];
+    var norm = function (e) {
+      return normalizeExpenseRow(e, categoriesCtx);
+    };
+    if (!lExp.length && rExp.length) {
+      return { expenses: rExp.map(norm), dataUpdatedAt: rAt, needSync: false };
     }
-    if (!l.needSync && rAt > lAt) {
-      return {
-        expenses: (r.expenses || []).map(normalizeExpenseRow),
-        dataUpdatedAt: rAt,
-        needSync: false,
-      };
+    if (!rExp.length && lExp.length) {
+      return { expenses: lExp.map(norm), dataUpdatedAt: lAt, needSync: false };
+    }
+    if (!l.needSync && rAt > lAt && !lExp.length) {
+      return { expenses: rExp.map(norm), dataUpdatedAt: rAt, needSync: false };
     }
     return {
       expenses: dedupeFixedExpensesInList(
         mergeRowsById(
-          r.expenses || [],
-          l.expenses || [],
+          rExp,
+          lExp,
           function (e) {
             return e && e.id;
           },
           expenseUpdatedAt
-        ).map(normalizeExpenseRow)
+        ).map(norm)
       ),
       dataUpdatedAt: Math.max(rAt, lAt),
       needSync: false,
@@ -1510,13 +1574,18 @@
     var remote = coercePayloadToV3(remotePayload || {});
     var local = coercePayloadToV3(localPayload || {});
     var cfg = mergeSpendingConfig(remote, local);
+    var categoriesCtx = categoriesWithExpenseOrphans(
+      cfg.categories,
+      remote.days,
+      local.days
+    );
     var merged = {
       schemaVersion: DATA_SCHEMA_VERSION,
       dataUpdatedAt: Math.max(remote.dataUpdatedAt || 0, local.dataUpdatedAt || 0),
       months: {},
       days: {},
       fixedTemplates: cfg.fixedTemplates,
-      categories: cfg.categories,
+      categories: categoriesCtx,
       spendingJars: cfg.spendingJars,
       settings: cfg.settings,
       configDataUpdatedAt: cfg.configDataUpdatedAt,
@@ -1533,20 +1602,20 @@
       var rShard = remote.days[dk];
       var lShard = local.days[dk];
       if (lShard && lShard.needSync) {
-        merged.days[dk] = mergeDayShard(rShard, lShard);
+        merged.days[dk] = mergeDayShard(rShard, lShard, categoriesCtx);
         return;
       }
       if (rShard && (!lShard || (rShard.dataUpdatedAt || 0) > (lShard.dataUpdatedAt || 0))) {
-        merged.days[dk] = mergeDayShard(rShard, lShard);
+        merged.days[dk] = mergeDayShard(rShard, lShard, categoriesCtx);
         return;
       }
       if (lShard) {
-        merged.days[dk] = normalizeDayShard(lShard);
+        merged.days[dk] = normalizeDayShard(lShard, categoriesCtx);
         merged.days[dk].needSync = false;
         return;
       }
       if (rShard) {
-        merged.days[dk] = normalizeDayShard(rShard);
+        merged.days[dk] = normalizeDayShard(rShard, categoriesCtx);
         merged.days[dk].needSync = false;
       }
     });
@@ -2191,7 +2260,7 @@
   }
 
   function categoryIdExists(id) {
-    return !!findCategory(id);
+    return categoryIdExistsIn(id, null);
   }
 
   function getCategoryLabel(id) {
@@ -2206,10 +2275,7 @@
   }
 
   function getFirstCategoryId() {
-    if (!app || !Array.isArray(app.categories) || !app.categories[0]) {
-      return "cat-an-uong";
-    }
-    return app.categories[0].id;
+    return getFirstCategoryIdFrom(null);
   }
 
   function dedupeJarCategoriesExclusive() {
@@ -4555,10 +4621,20 @@
     tick();
   }
 
-  function normalizeExpenseRow(row) {
-    var cat = row.category;
+  function normalizeExpenseRow(row, categoriesOpt) {
+    var cat = row && row.category;
     if (cat === "con-cai") cat = "con-nhim";
-    if (!categoryIdExists(cat)) cat = getFirstCategoryId();
+    var cats = categoriesOpt;
+    if (cats === undefined && app && Array.isArray(app.categories)) {
+      cats = app.categories;
+    }
+    if (Array.isArray(cats) && cats.length > 0) {
+      if (!categoryIdExistsIn(cat, cats)) {
+        cat = getFirstCategoryIdFrom(cats);
+      }
+    } else if (!cat || typeof cat !== "string") {
+      cat = "cat-an-uong";
+    }
     var updatedAt =
       typeof row.updatedAt === "number" && row.updatedAt > 0
         ? Math.round(row.updatedAt)
