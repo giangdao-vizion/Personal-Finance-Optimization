@@ -477,13 +477,65 @@
     return out;
   }
 
-  /** Chỉ phần settings đồng bộ lên cloud — theme giữ cục bộ từng máy. */
+  /** Đồng bộ cloud: hạn mức mặc định + credit card. Theme chỉ local (giao diện). */
   function settingsForCloudStorage(s) {
     var ns = normalizeSettings(s || {});
     return {
       defaultLimit: ns.defaultLimit,
       creditCard: ns.creditCard,
     };
+  }
+
+  function applyCloudSyncedSettings(incoming, preservedTheme) {
+    if (!app.settings) app.settings = defaultSettings();
+    var synced = settingsForCloudStorage(incoming);
+    app.settings.defaultLimit = synced.defaultLimit;
+    app.settings.creditCard = normalizeCreditCardSettings(synced.creditCard);
+    app.settings.themeMode = normalizeThemeMode(
+      preservedTheme || app.settings.themeMode
+    );
+  }
+
+  /**
+   * Gộp settings (hạn mức + credit card) khi sync cloud.
+   * paidCycleEnds: hợp nhất cả hai máy; các field khác theo config mới hơn.
+   */
+  function mergeSettingsForCloud(remote, local, rAt, lAt) {
+    var rs = settingsForCloudStorage(remote.settings);
+    var ls = settingsForCloudStorage(local.settings);
+    var rNeed = !!remote.configNeedSync;
+    var lNeed = !!local.configNeedSync;
+    var pickLocal;
+    if (lNeed && !rNeed) pickLocal = true;
+    else if (rNeed && !lNeed) pickLocal = false;
+    else if (lNeed && rNeed) pickLocal = lAt >= rAt;
+    else pickLocal = lAt > rAt;
+    var base = pickLocal ? ls : rs;
+    var rCc = normalizeCreditCardSettings(rs.creditCard);
+    var lCc = normalizeCreditCardSettings(ls.creditCard);
+    var ccPick = pickLocal ? lCc : rCc;
+    var paid = {};
+    (rCc.paidCycleEnds || []).forEach(function (k) {
+      paid[k] = true;
+    });
+    (lCc.paidCycleEnds || []).forEach(function (k) {
+      paid[k] = true;
+    });
+    return {
+      defaultLimit: base.defaultLimit,
+      creditCard: {
+        enabled: ccPick.enabled,
+        statementDay: ccPick.statementDay,
+        paidCycleEnds: Object.keys(paid).sort(),
+      },
+    };
+  }
+
+  /** Payload gửi lên Supabase: bỏ theme + tombstone cũ. */
+  function preparePayloadForCloudStorage(payload) {
+    var p = prunePayloadForCloudUpload(coercePayloadToV3(payload || {}));
+    p.settings = settingsForCloudStorage(p.settings);
+    return p;
   }
 
   function getCreditCardSettings() {
@@ -698,15 +750,30 @@
     return list[0].id;
   }
 
-  /** Gộp danh mục config + mọi category id đang được khoản chi tham chiếu (tránh remap khi sync). */
+  /** Gộp danh mục config + mọi category id đang được khoản chi / khoản cố định tham chiếu. */
   function categoriesWithExpenseOrphans(baseCategories) {
     var map = {};
     var i;
     for (i = 1; i < arguments.length; i++) {
-      var days = arguments[i];
-      if (!days || typeof days !== "object") continue;
-      Object.keys(days).forEach(function (dk) {
-        var shard = days[dk];
+      var arg = arguments[i];
+      if (!arg) continue;
+      if (Array.isArray(arg)) {
+        arg.forEach(function (t) {
+          if (!t || isRowDeleted(t)) return;
+          var id = t.category;
+          if (id === "con-cai") id = "con-nhim";
+          if (!id || typeof id !== "string" || map[id]) return;
+          map[id] = {
+            id: id,
+            label: LEGACY_CATEGORY_LABELS[id] || id,
+            iconId: "pin",
+          };
+        });
+        continue;
+      }
+      if (typeof arg !== "object") continue;
+      Object.keys(arg).forEach(function (dk) {
+        var shard = arg[dk];
         if (!shard || !Array.isArray(shard.expenses)) return;
         shard.expenses.forEach(function (e) {
           if (!e || isRowDeleted(e)) return;
@@ -730,12 +797,51 @@
     });
   }
 
+  /** Chỉ đổi alias legacy; không remap sang danh mục mặc định. */
+  function preserveExpenseCategoryId(cat) {
+    if (cat === "con-cai") return "con-nhim";
+    if (typeof cat === "string" && cat) return cat;
+    return "";
+  }
+
+  /**
+   * Chuẩn hoá khoản chi khi load/sync cloud: giữ nguyên category id trên record.
+   * User luôn tạo khoản kèm danh mục — sync không được ghi đè field này.
+   */
+  function normalizeExpenseRowForSync(row) {
+    if (isRowDeleted(row)) {
+      return expenseTombstone(row && row.id ? row.id : uid(), row && row.deletedAt);
+    }
+    var cat = preserveExpenseCategoryId(row && row.category);
+    var updatedAt =
+      typeof row.updatedAt === "number" && row.updatedAt > 0
+        ? Math.round(row.updatedAt)
+        : expenseCreatedAt(row) || nowTs();
+    var createdAt =
+      typeof row.createdAt === "number" && row.createdAt > 0
+        ? Math.round(row.createdAt)
+        : expenseCreatedAt(row) || updatedAt;
+    var o = {
+      id: row.id || uid(),
+      category: cat,
+      name: typeof row.name === "string" ? row.name.trim() : "",
+      amount: typeof row.amount === "number" && row.amount >= 0 ? Math.round(row.amount) : 0,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    };
+    if (typeof row.dateTs === "number" && row.dateTs > 0) {
+      o.dateTs = Math.round(row.dateTs);
+    }
+    if (row.templateId) o.templateId = row.templateId;
+    if (row.monthEdited) o.monthEdited = true;
+    if (row.isCreditCard) o.isCreditCard = true;
+    return o;
+  }
+
   function normalizeDayShard(raw, categoriesOpt) {
     var row = raw && typeof raw === "object" ? raw : {};
     var expenses = Array.isArray(row.expenses)
-      ? row.expenses.map(function (e) {
-          return normalizeExpenseRow(e, categoriesOpt);
-        })
+      ? row.expenses.map(normalizeExpenseRowForSync)
       : [];
     return {
       expenses: expenses,
@@ -787,25 +893,31 @@
     Object.keys(monthSrc).forEach(function (k) {
       months[k] = normalizeMonthMeta(monthSrc[k], k);
     });
-    var days = {};
     var daySrc = src.days && typeof src.days === "object" ? src.days : {};
-    Object.keys(daySrc).forEach(function (k) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return;
-      days[k] = normalizeDayShard(daySrc[k]);
-    });
     var fixedTemplates;
     if (Array.isArray(src.fixedTemplates)) {
       fixedTemplates = src.fixedTemplates.map(normalizeFixedTemplateRow);
     } else {
       fixedTemplates = defaultFixedTemplates();
     }
-    var settings = normalizeSettings(src.settings);
     var categories;
     if (Array.isArray(src.categories) && src.categories.length > 0) {
       categories = src.categories.map(normalizeCategoryRow);
     } else {
       categories = defaultCategories();
     }
+    var categoriesCtx = categoriesWithExpenseOrphans(
+      categories,
+      daySrc,
+      fixedTemplates
+    );
+    var days = {};
+    Object.keys(daySrc).forEach(function (k) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return;
+      days[k] = normalizeDayShard(daySrc[k], categoriesCtx);
+    });
+    var settings = normalizeSettings(src.settings);
+    categories = categoriesCtx;
     var spendingJars = (Array.isArray(src.spendingJars) ? src.spendingJars : []).map(
       normalizeSpendingJarRow
     );
@@ -1005,7 +1117,7 @@
     var prefix = monthKey + "-";
     var byId = {};
     (expenses || []).forEach(function (e) {
-      var row = normalizeExpenseRow(e);
+      var row = normalizeExpenseRowForSync(e);
       if (!row.id) return;
       var prev = byId[row.id];
       byId[row.id] = prev ? pickExpenseKeepWinner(prev, row) : row;
@@ -1040,8 +1152,21 @@
       dataUpdatedAt: m.dataUpdatedAt || 0,
       needSync: !!m.needSync,
       deletedAt: m.deletedAt,
-      expenses: getMonthExpenses(monthKey).map(normalizeExpenseRow),
+      expenses: getMonthExpenses(monthKey).map(normalizeExpenseRowForSync),
     };
+  }
+
+  function getCategoriesContext() {
+    if (!app) return defaultCategories();
+    return categoriesWithExpenseOrphans(
+      app.categories,
+      app.days,
+      app.fixedTemplates
+    );
+  }
+
+  function normalizeExpenseRowWithContext(row) {
+    return normalizeExpenseRow(row, getCategoriesContext());
   }
 
   function forEachExpenseInApp(fn) {
@@ -1291,24 +1416,22 @@
     return expenseUpdatedAt(r) >= expenseUpdatedAt(l) ? r : l;
   }
 
-  function mergeExpenseRowsForCloud(remoteRows, localRows, categoriesCtx) {
+  function mergeExpenseRowsForCloud(remoteRows, localRows) {
     var map = {};
-    var norm = function (e) {
-      return normalizeExpenseRow(e, categoriesCtx);
-    };
     (remoteRows || []).forEach(function (e) {
       if (!e || !e.id) return;
-      map[e.id] = norm(e);
+      map[e.id] = e;
     });
     (localRows || []).forEach(function (e) {
       if (!e || !e.id) return;
       var prev = map[e.id];
-      map[e.id] = prev ? norm(mergeExpenseRowForCloud(prev, e)) : norm(e);
+      map[e.id] = prev ? mergeExpenseRowForCloud(prev, e) : e;
     });
     return dedupeFixedExpensesInList(
       Object.keys(map).map(function (id) {
-        return map[id];
-      })
+        return normalizeExpenseRowForSync(map[id]);
+      }),
+      normalizeExpenseRowForSync
     );
   }
 
@@ -1466,12 +1589,13 @@
     return expenseUpdatedAt(a) >= expenseUpdatedAt(b) ? a : b;
   }
 
-  function dedupeFixedExpensesInList(expenses) {
+  function dedupeFixedExpensesInList(expenses, normFn) {
+    var norm = normFn || normalizeExpenseRow;
     var out = [];
     var liveByTpl = {};
     var tombByTpl = {};
     (Array.isArray(expenses) ? expenses : []).forEach(function (e) {
-      var row = normalizeExpenseRow(e);
+      var row = norm(e);
       if (!row.templateId) {
         out.push(row);
         return;
@@ -1712,16 +1836,6 @@
   function mergeSpendingConfig(remote, local) {
     var rAt = remote.configDataUpdatedAt || 0;
     var lAt = local.configDataUpdatedAt || 0;
-    var useLocal =
-      local.configNeedSync && (lAt >= rAt || !remote.configNeedSync);
-    var useRemote = remote.configNeedSync && rAt > lAt;
-    var settingsBase = useRemote
-      ? remote
-      : useLocal
-      ? local
-      : rAt >= lAt
-      ? remote
-      : local;
     return {
       fixedTemplates: mergeRowsById(
         remote.fixedTemplates,
@@ -1745,20 +1859,7 @@
         },
         jarUpdatedAt
       ).map(normalizeSpendingJarRow),
-      settings: (function () {
-        var merged = normalizeSettings(settingsBase.settings);
-        var rCc = normalizeCreditCardSettings((remote.settings || {}).creditCard);
-        var lCc = normalizeCreditCardSettings((local.settings || {}).creditCard);
-        var paid = {};
-        (rCc.paidCycleEnds || []).forEach(function (k) {
-          paid[k] = true;
-        });
-        (lCc.paidCycleEnds || []).forEach(function (k) {
-          paid[k] = true;
-        });
-        merged.creditCard.paidCycleEnds = Object.keys(paid).sort();
-        return merged;
-      })(),
+      settings: mergeSettingsForCloud(remote, local, rAt, lAt),
       configDataUpdatedAt: Math.max(rAt, lAt),
       configNeedSync: false,
     };
@@ -1771,20 +1872,29 @@
     var lAt = l.dataUpdatedAt || 0;
     var rExp = r.expenses || [];
     var lExp = l.expenses || [];
-    var norm = function (e) {
-      return normalizeExpenseRow(e, categoriesCtx);
-    };
     if (!lExp.length && rExp.length) {
-      return { expenses: rExp.map(norm), dataUpdatedAt: rAt, needSync: false };
+      return {
+        expenses: rExp.map(normalizeExpenseRowForSync),
+        dataUpdatedAt: rAt,
+        needSync: false,
+      };
     }
     if (!rExp.length && lExp.length) {
-      return { expenses: lExp.map(norm), dataUpdatedAt: lAt, needSync: false };
+      return {
+        expenses: lExp.map(normalizeExpenseRowForSync),
+        dataUpdatedAt: lAt,
+        needSync: false,
+      };
     }
     if (!l.needSync && rAt > lAt && !lExp.length) {
-      return { expenses: rExp.map(norm), dataUpdatedAt: rAt, needSync: false };
+      return {
+        expenses: rExp.map(normalizeExpenseRowForSync),
+        dataUpdatedAt: rAt,
+        needSync: false,
+      };
     }
     return {
-      expenses: mergeExpenseRowsForCloud(rExp, lExp, categoriesCtx),
+      expenses: mergeExpenseRowsForCloud(rExp, lExp),
       dataUpdatedAt: Math.max(rAt, lAt),
       needSync: false,
     };
@@ -1819,7 +1929,8 @@
     var categoriesCtx = categoriesWithExpenseOrphans(
       cfg.categories,
       remote.days,
-      local.days
+      local.days,
+      cfg.fixedTemplates
     );
     var merged = {
       schemaVersion: DATA_SCHEMA_VERSION,
@@ -1984,7 +2095,7 @@
       } catch (eRemote) {
         mergedPayload = coercePayloadToV3(getLocalPayloadForCloudMerge(!skipFlush));
       }
-      mergedPayload = prunePayloadForCloudUpload(mergedPayload);
+      mergedPayload = preparePayloadForCloudStorage(mergedPayload);
       var mergedSig = wirePayloadSignature(mergedPayload);
       var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
       if (!forceLocal && mergedSig && mergedSig === remoteSig) {
@@ -2008,7 +2119,7 @@
         if (opts.pullAfter) {
           await pullSupabaseStateAndRender();
         } else {
-          applyNormalizedAppData(mergedPayload);
+          applyNormalizedAppData(mergedPayload, { cloudMerge: true });
           clearAllSyncFlagsOnApp();
           saveAppDataToLocal();
           refreshMonthUiAfterCloudMerge();
@@ -2195,14 +2306,17 @@
     }
     app.fixedTemplates = app.fixedTemplates.map(function (t) {
       var row = normalizeFixedTemplateRow(t);
-      if (!categoryIdExists(row.category)) row.category = getFirstCategoryId();
+      if (!row.category || typeof row.category !== "string") {
+        row.category = getFirstCategoryId();
+      }
       return row;
     });
   }
 
   normalizeAllFixedTemplates();
 
-  function applyNormalizedAppData(nextData) {
+  function applyNormalizedAppData(nextData, opts) {
+    opts = opts || {};
     var normalized = coercePayloadToV3(nextData);
     var preservedTheme = normalizeThemeMode(
       app && app.settings && app.settings.themeMode ? app.settings.themeMode : "dark"
@@ -2215,8 +2329,11 @@
     app.months = normalized.months;
     app.days = normalized.days;
     app.fixedTemplates = normalized.fixedTemplates;
-    app.settings = normalizeSettings(normalized.settings);
-    app.settings.themeMode = preservedTheme;
+    if (opts.cloudMerge) {
+      applyCloudSyncedSettings(normalized.settings, preservedTheme);
+    } else {
+      app.settings = normalizeSettings(normalized.settings);
+    }
     app.categories = normalized.categories;
     app.configDataUpdatedAt = normalized.configDataUpdatedAt || 0;
     app.configNeedSync = !!normalized.configNeedSync;
@@ -4559,7 +4676,7 @@
     app.settings.defaultLimit = parseMoneyToVND(elSettingsDefaultLimit.value);
     elSettingsDefaultLimit.value = formatAsNganDisplay(app.settings.defaultLimit);
     updateAmountPreview(elSettingsDefaultLimit, elSettingsDefaultLimitPreview);
-    saveAppData({ configDirty: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     refreshSettingsDefaultLimitDisplay();
     closeSettingsDefaultLimitEdit();
   }
@@ -4625,7 +4742,7 @@
     j.categoryIds = catIds;
     j.updatedAt = nowTs();
     dedupeJarCategoriesExclusive();
-    saveAppData({ configDirty: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     closeEditJarDialog();
     renderSettingsJarsList();
     renderNewJarCategoryCheckboxes();
@@ -4645,7 +4762,7 @@
     });
     if (next.length === app.spendingJars.length) return false;
     app.spendingJars = next;
-    saveAppData({ configDirty: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     renderSettingsJarsList();
     renderNewJarCategoryCheckboxes();
     if (activeMonthKey && state) persistAndRender();
@@ -4763,7 +4880,7 @@
     refreshAllCategorySelects();
     renderSettingsCategoriesList();
     if (activeMonthKey && state) {
-      state.expenses = state.expenses.map(normalizeExpenseRow);
+      state.expenses = state.expenses.map(normalizeExpenseRowWithContext);
       syncFixedIntoMonth(state, activeMonthKey);
       persistAndRender();
     } else {
@@ -4872,18 +4989,17 @@
     if (isRowDeleted(row)) {
       return expenseTombstone(row && row.id ? row.id : uid(), row && row.deletedAt);
     }
-    var cat = row && row.category;
-    if (cat === "con-cai") cat = "con-nhim";
-    var cats = categoriesOpt;
-    if (cats === undefined && app && Array.isArray(app.categories)) {
-      cats = app.categories;
-    }
-    if (Array.isArray(cats) && cats.length > 0) {
-      if (!categoryIdExistsIn(cat, cats)) {
-        cat = getFirstCategoryIdFrom(cats);
+    var cat = preserveExpenseCategoryId(row && row.category);
+    if (!cat) {
+      var cats = categoriesOpt;
+      if (cats === undefined && app && Array.isArray(app.categories)) {
+        cats = app.categories;
       }
-    } else if (!cat || typeof cat !== "string") {
-      cat = "cat-an-uong";
+      if (Array.isArray(cats) && cats.length > 0) {
+        cat = getFirstCategoryIdFrom(cats);
+      } else {
+        cat = "cat-an-uong";
+      }
     }
     var updatedAt =
       typeof row.updatedAt === "number" && row.updatedAt > 0
@@ -4917,7 +5033,7 @@
       key: activeMonthKey,
       income: typeof state.income === "number" ? state.income : 0,
       incomeUserSet: !!state.incomeUserSet,
-      expenses: (state.expenses || []).map(normalizeExpenseRow),
+      expenses: (state.expenses || []).map(normalizeExpenseRowForSync),
     };
   }
 
@@ -4946,7 +5062,7 @@
     var prefix = pin.key + "-";
     var byDay = {};
     (pin.expenses || []).forEach(function (e) {
-      var row = normalizeExpenseRow(e);
+      var row = normalizeExpenseRowForSync(e);
       var dk = expenseDayKeyFromRow(row);
       if (!dk || dk.indexOf(prefix) !== 0) dk = pin.key + "-01";
       if (!byDay[dk]) byDay[dk] = [];
@@ -4963,7 +5079,8 @@
               return ex && ex.id;
             },
             expenseUpdatedAt
-          ).map(normalizeExpenseRow)
+          ).map(normalizeExpenseRowForSync),
+          normalizeExpenseRowForSync
         ),
         dataUpdatedAt: Math.max(existingShard.dataUpdatedAt || 0, ts),
         needSync: true,
@@ -6489,7 +6606,7 @@
     app.settings.creditCard = normalizeCreditCardSettings(cc);
     updateSettingsCreditCardDueDisplay();
     syncCreditCardFeatureVisibility();
-    saveAppData({ configDirty: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     renderCreditCardReport();
   }
 
@@ -6980,19 +7097,27 @@
 
   function applyCloudMergedPayload(merged) {
     var editDraft = captureEditExpenseFormDraft();
-    applyNormalizedAppData(merged);
+    applyNormalizedAppData(merged, { cloudMerge: true });
     saveAppDataToLocal();
     applyThemeSettings();
     refreshAllCategorySelects();
     refreshMonthUiAfterCloudMerge();
+    refreshSettingsAfterCloudMerge();
     restoreEditExpenseFormDraft(editDraft);
     lastSyncedPayload = wirePayloadSignature(getAppPayloadForSync());
+  }
+
+  function refreshSettingsAfterCloudMerge() {
+    refreshSettingsDefaultLimitDisplay();
+    renderSettingsCreditCard();
+    renderSettingsJarsList();
+    renderNewJarCategoryCheckboxes();
+    syncCreditCardFeatureVisibility();
   }
 
   function refreshMonthUiAfterCloudMerge() {
     rebindActiveMonthState({ skipFlush: true });
     if (state && activeMonthKey) {
-      state.expenses = state.expenses.map(normalizeExpenseRow);
       syncFixedIntoMonth(state, activeMonthKey);
     }
     renderSummary();
@@ -7512,7 +7637,6 @@
     if (activeMonthKey && state) flushActiveMonthIntoApp();
     ensureMonth(key);
     state = buildMonthState(key);
-    state.expenses = state.expenses.map(normalizeExpenseRow);
     if (!state.incomeUserSet) {
       state.income = getDefaultMonthlyLimit();
     }
@@ -7967,7 +8091,7 @@
           updatedAt: nowTs(),
         })
       );
-      saveAppData({ configDirty: true });
+      saveAppData({ configDirty: true, immediateSync: true });
       renderSettingsJarsList();
       setSettingsAddJarPanelOpen(false);
       if (activeMonthKey && state) persistAndRender();
