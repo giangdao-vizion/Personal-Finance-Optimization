@@ -1795,6 +1795,89 @@
     return out;
   }
 
+  function preferLocalConfig(rAt, lAt, remoteNeedSync, localNeedSync) {
+    if (localNeedSync && !remoteNeedSync) return true;
+    if (remoteNeedSync && !localNeedSync) return false;
+    return lAt >= rAt;
+  }
+
+  /**
+   * Gộp list config theo id; giữ thứ tự mảng bên config mới hơn / needSync.
+   * Dùng cho khoản cố định, hũ (kéo-thả thứ tự trong Cài đặt).
+   */
+  function mergeRowsByIdPreserveOrder(
+    remoteRows,
+    localRows,
+    getId,
+    getUpdated,
+    rAt,
+    lAt,
+    remoteNeedSync,
+    localNeedSync,
+    normalizeRow
+  ) {
+    var norm = normalizeRow || function (r) {
+      return r;
+    };
+    var map = {};
+    function put(row, sideAt) {
+      if (!row || typeof row !== "object") return;
+      var n = norm(row);
+      var id = getId(n);
+      if (!id) return;
+      var prev = map[id];
+      var rowAt = getUpdated(n);
+      if (!prev) {
+        map[id] = { row: n, rowAt: rowAt, sideAt: sideAt };
+        return;
+      }
+      if (rowAt > prev.rowAt || (rowAt === prev.rowAt && sideAt >= prev.sideAt)) {
+        map[id] = { row: n, rowAt: rowAt, sideAt: sideAt };
+      }
+    }
+    (Array.isArray(remoteRows) ? remoteRows : []).forEach(function (r) {
+      put(r, rAt);
+    });
+    (Array.isArray(localRows) ? localRows : []).forEach(function (r) {
+      put(r, lAt);
+    });
+    var preferLocal = preferLocalConfig(rAt, lAt, remoteNeedSync, localNeedSync);
+    var primary = preferLocal
+      ? Array.isArray(localRows)
+        ? localRows
+        : []
+      : Array.isArray(remoteRows)
+      ? remoteRows
+      : [];
+    var secondary = preferLocal
+      ? Array.isArray(remoteRows)
+        ? remoteRows
+        : []
+      : Array.isArray(localRows)
+      ? localRows
+      : [];
+    var seen = {};
+    var out = [];
+    function pushList(list) {
+      (list || []).forEach(function (row) {
+        var n = norm(row);
+        var id = getId(n);
+        var hit = map[id];
+        if (!hit || seen[id]) return;
+        seen[id] = true;
+        out.push(hit.row);
+      });
+    }
+    pushList(primary);
+    pushList(secondary);
+    Object.keys(map).forEach(function (id) {
+      if (seen[id]) return;
+      seen[id] = true;
+      out.push(map[id].row);
+    });
+    return out;
+  }
+
   /** Gộp danh mục theo id; giữ thứ tự mảng bên config mới hơn (hoặc đang needSync). */
   function mergeCategoriesByConfigTime(
     remote,
@@ -1817,9 +1900,7 @@
       }
     });
     var preferLocal;
-    if (localNeedSync && !remoteNeedSync) preferLocal = true;
-    else if (remoteNeedSync && !localNeedSync) preferLocal = false;
-    else preferLocal = lAt >= rAt;
+    preferLocal = preferLocalConfig(rAt, lAt, remoteNeedSync, localNeedSync);
     var primary = preferLocal
       ? Array.isArray(local)
         ? local
@@ -1890,13 +1971,18 @@
     var rAt = remote.configDataUpdatedAt || 0;
     var lAt = local.configDataUpdatedAt || 0;
     return {
-      fixedTemplates: mergeRowsById(
+      fixedTemplates: mergeRowsByIdPreserveOrder(
         remote.fixedTemplates,
         local.fixedTemplates,
         function (t) {
           return t && t.id;
         },
-        fixedTemplateUpdatedAt
+        fixedTemplateUpdatedAt,
+        rAt,
+        lAt,
+        !!remote.configNeedSync,
+        !!local.configNeedSync,
+        normalizeFixedTemplateRow
       ),
       categories: mergeCategoriesByConfigTime(
         remote.categories,
@@ -1906,14 +1992,19 @@
         !!remote.configNeedSync,
         !!local.configNeedSync
       ),
-      spendingJars: mergeRowsById(
+      spendingJars: mergeRowsByIdPreserveOrder(
         remote.spendingJars || [],
         local.spendingJars || [],
         function (j) {
           return j && j.id;
         },
-        jarUpdatedAt
-      ).map(normalizeSpendingJarRow),
+        jarUpdatedAt,
+        rAt,
+        lAt,
+        !!remote.configNeedSync,
+        !!local.configNeedSync,
+        normalizeSpendingJarRow
+      ),
       settings: mergeSettingsForCloud(remote, local, rAt, lAt),
       configDataUpdatedAt: Math.max(rAt, lAt),
       configNeedSync: false,
@@ -4186,7 +4277,7 @@
   }
 
   function afterFixedTemplatesReordered() {
-    saveAppData({ configDirty: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     renderFixedTemplatesList();
   }
 
@@ -4206,9 +4297,17 @@
   }
 
   function afterJarsReordered() {
-    saveAppData({ configDirty: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     renderSettingsJarsList();
-    if (activeMonthKey && state) persistAndRender();
+    renderNewJarCategoryCheckboxes();
+    if (editingJarId) {
+      var ej = (app.spendingJars || []).filter(function (x) {
+        return x.id === editingJarId;
+      })[0];
+      if (ej && elEditJarCategories) {
+        renderJarCategoryCheckboxes(elEditJarCategories, "jar-cat-edit", ej.categoryIds || []);
+      }
+    }
   }
 
   function renderSettingsJarsList() {
