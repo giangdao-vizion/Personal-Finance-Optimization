@@ -750,9 +750,26 @@
     return list[0].id;
   }
 
-  /** Gộp danh mục config + mọi category id đang được khoản chi / khoản cố định tham chiếu. */
+  /** Gộp danh mục config + orphan từ expense/fixed; giữ thứ tự `baseCategories`. */
   function categoriesWithExpenseOrphans(baseCategories) {
+    var out = [];
     var map = {};
+    (baseCategories || []).forEach(function (c) {
+      var row = normalizeCategoryRow(c);
+      map[row.id] = row;
+      out.push(row);
+    });
+    function addOrphan(id) {
+      if (id === "con-cai") id = "con-nhim";
+      if (!id || typeof id !== "string" || map[id]) return;
+      var row = {
+        id: id,
+        label: LEGACY_CATEGORY_LABELS[id] || id,
+        iconId: "pin",
+      };
+      map[id] = row;
+      out.push(row);
+    }
     var i;
     for (i = 1; i < arguments.length; i++) {
       var arg = arguments[i];
@@ -760,14 +777,7 @@
       if (Array.isArray(arg)) {
         arg.forEach(function (t) {
           if (!t || isRowDeleted(t)) return;
-          var id = t.category;
-          if (id === "con-cai") id = "con-nhim";
-          if (!id || typeof id !== "string" || map[id]) return;
-          map[id] = {
-            id: id,
-            label: LEGACY_CATEGORY_LABELS[id] || id,
-            iconId: "pin",
-          };
+          addOrphan(t.category);
         });
         continue;
       }
@@ -777,24 +787,11 @@
         if (!shard || !Array.isArray(shard.expenses)) return;
         shard.expenses.forEach(function (e) {
           if (!e || isRowDeleted(e)) return;
-          var id = e.category;
-          if (id === "con-cai") id = "con-nhim";
-          if (!id || typeof id !== "string" || map[id]) return;
-          map[id] = {
-            id: id,
-            label: LEGACY_CATEGORY_LABELS[id] || id,
-            iconId: "pin",
-          };
+          addOrphan(e.category);
         });
       });
     }
-    (baseCategories || []).forEach(function (c) {
-      var row = normalizeCategoryRow(c);
-      map[row.id] = row;
-    });
-    return Object.keys(map).map(function (id) {
-      return map[id];
-    });
+    return out;
   }
 
   /** Chỉ đổi alias legacy; không remap sang danh mục mặc định. */
@@ -810,7 +807,7 @@
    */
   function normalizeExpenseRowForSync(row) {
     if (isRowDeleted(row)) {
-      return expenseTombstone(row && row.id ? row.id : uid(), row && row.deletedAt);
+      return expenseTombstone(row && row.id ? row.id : uid(), row && row.deletedAt, row);
     }
     var cat = preserveExpenseCategoryId(row && row.category);
     var updatedAt =
@@ -1365,9 +1362,12 @@
     return Date.now();
   }
 
-  /** Soft-delete: chỉ giữ id + isDeleted + deletedAt. */
-  function expenseTombstone(id, deletedAt) {
-    return {
+  /**
+   * Soft-delete tombstone. Khoản cố định giữ thêm templateId để syncFixedIntoMonth
+   * biết tháng đó đã bỏ qua, không tự thêm lại.
+   */
+  function expenseTombstone(id, deletedAt, srcRow) {
+    var tomb = {
       id: id,
       isDeleted: true,
       deletedAt:
@@ -1375,6 +1375,10 @@
           ? Math.round(deletedAt)
           : nowTs(),
     };
+    var tpl =
+      srcRow && typeof srcRow.templateId === "string" ? srcRow.templateId : "";
+    if (tpl) tomb.templateId = tpl;
+    return tomb;
   }
 
   function expenseIdExistsInDays(id, days) {
@@ -1405,13 +1409,18 @@
     var lDel = isRowDeleted(l);
     var id = r.id || l.id;
     if (rDel && !lDel) {
-      return expenseTombstone(id, r.deletedAt || nowTs());
+      return expenseTombstone(id, r.deletedAt || nowTs(), r);
     }
     if (!rDel && lDel) {
-      return expenseTombstone(id, l.deletedAt || nowTs());
+      return expenseTombstone(id, l.deletedAt || nowTs(), l);
     }
     if (rDel && lDel) {
-      return expenseTombstone(id, Math.max(r.deletedAt || 0, l.deletedAt || 0) || nowTs());
+      var newerDel = (r.deletedAt || 0) >= (l.deletedAt || 0) ? r : l;
+      return expenseTombstone(
+        id,
+        Math.max(r.deletedAt || 0, l.deletedAt || 0) || nowTs(),
+        newerDel
+      );
     }
     return expenseUpdatedAt(r) >= expenseUpdatedAt(l) ? r : l;
   }
@@ -1473,16 +1482,20 @@
 
   function applyExpenseTombstone(id) {
     if (!id) return false;
-    var tomb = expenseTombstone(id, nowTs());
+    var srcRow = null;
     var found = false;
     forEachExpenseInApp(function (e, dk) {
       if (!e || e.id !== id) return;
+      if (!isRowDeleted(e) && !srcRow) srcRow = e;
       var shard = app.days[dk];
       if (!shard || !Array.isArray(shard.expenses)) return;
       var i;
       for (i = 0; i < shard.expenses.length; i++) {
         if (shard.expenses[i] && shard.expenses[i].id === id) {
-          shard.expenses[i] = tomb;
+          if (!isRowDeleted(shard.expenses[i]) && !srcRow) {
+            srcRow = shard.expenses[i];
+          }
+          shard.expenses[i] = expenseTombstone(id, nowTs(), srcRow || shard.expenses[i]);
           markDayDirty(dk);
           found = true;
         }
@@ -1491,8 +1504,9 @@
     if (state && Array.isArray(state.expenses)) {
       state.expenses = state.expenses.map(function (e) {
         if (e && e.id === id) {
+          if (!isRowDeleted(e) && !srcRow) srcRow = e;
           found = true;
-          return tomb;
+          return expenseTombstone(id, nowTs(), srcRow || e);
         }
         return e;
       });
@@ -1781,8 +1795,15 @@
     return out;
   }
 
-  /** Gộp danh mục theo id; bên có configDataUpdatedAt mới hơn thắng khi trùng id. */
-  function mergeCategoriesByConfigTime(remote, local, rAt, lAt) {
+  /** Gộp danh mục theo id; giữ thứ tự mảng bên config mới hơn (hoặc đang needSync). */
+  function mergeCategoriesByConfigTime(
+    remote,
+    local,
+    rAt,
+    lAt,
+    remoteNeedSync,
+    localNeedSync
+  ) {
     var map = {};
     (Array.isArray(remote) ? remote : []).forEach(function (c) {
       var row = normalizeCategoryRow(c);
@@ -1795,8 +1816,40 @@
         map[row.id] = { row: row, at: lAt };
       }
     });
+    var preferLocal;
+    if (localNeedSync && !remoteNeedSync) preferLocal = true;
+    else if (remoteNeedSync && !localNeedSync) preferLocal = false;
+    else preferLocal = lAt >= rAt;
+    var primary = preferLocal
+      ? Array.isArray(local)
+        ? local
+        : []
+      : Array.isArray(remote)
+      ? remote
+      : [];
+    var secondary = preferLocal
+      ? Array.isArray(remote)
+        ? remote
+        : []
+      : Array.isArray(local)
+        ? local
+        : [];
+    var seen = {};
     var out = [];
+    function pushFromList(list) {
+      (list || []).forEach(function (c) {
+        var row = normalizeCategoryRow(c);
+        var hit = map[row.id];
+        if (!hit || seen[row.id]) return;
+        seen[row.id] = true;
+        out.push(hit.row);
+      });
+    }
+    pushFromList(primary);
+    pushFromList(secondary);
     Object.keys(map).forEach(function (id) {
+      if (seen[id]) return;
+      seen[id] = true;
       out.push(map[id].row);
     });
     return out;
@@ -1849,7 +1902,9 @@
         remote.categories,
         local.categories,
         rAt,
-        lAt
+        lAt,
+        !!remote.configNeedSync,
+        !!local.configNeedSync
       ),
       spendingJars: mergeRowsById(
         remote.spendingJars || [],
@@ -4136,10 +4191,10 @@
   }
 
   function afterCategoriesReordered() {
-    saveAppData({ configDirty: true });
+    saveAppData({ configDirty: true, immediateSync: true });
     renderSettingsCategoriesList();
     renderNewJarCategoryCheckboxes();
-    refreshAllCategorySelects();
+    refreshAllCategorySelects(true);
     if (editingJarId) {
       var ej = (app.spendingJars || []).filter(function (x) {
         return x.id === editingJarId;
@@ -4148,7 +4203,6 @@
         renderJarCategoryCheckboxes(elEditJarCategories, "jar-cat-edit", ej.categoryIds || []);
       }
     }
-    if (activeMonthKey && state) persistAndRender();
   }
 
   function afterJarsReordered() {
@@ -4987,7 +5041,7 @@
 
   function normalizeExpenseRow(row, categoriesOpt) {
     if (isRowDeleted(row)) {
-      return expenseTombstone(row && row.id ? row.id : uid(), row && row.deletedAt);
+      return expenseTombstone(row && row.id ? row.id : uid(), row && row.deletedAt, row);
     }
     var cat = preserveExpenseCategoryId(row && row.category);
     if (!cat) {
