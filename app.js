@@ -3854,20 +3854,24 @@
   var elEditExpenseNameSuggestions = document.getElementById(
     "edit-expense-name-suggestions"
   );
+  var elEditAmount = document.getElementById("edit-expense-amount");
+  var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
   var expenseNameSuggestCtxAdd = {
     input: elName,
     list: elExpenseNameSuggestions,
     category: elCategory,
+    amount: elAmount,
+    amountPreview: elExpensePreview,
     hideTimer: null,
   };
   var expenseNameSuggestCtxEdit = {
     input: elEditExpenseName,
     list: elEditExpenseNameSuggestions,
     category: elEditExpenseCategory,
+    amount: elEditAmount,
+    amountPreview: elEditAmountPreview,
     hideTimer: null,
   };
-  var elEditAmount = document.getElementById("edit-expense-amount");
-  var elEditAmountPreview = document.getElementById("edit-expense-amount-preview");
   var elEditExpenseDate = document.getElementById("edit-expense-date");
   var elEditExpenseTime = document.getElementById("edit-expense-time");
   var elEditExpenseFixed = document.getElementById("edit-expense-fixed");
@@ -6471,31 +6475,66 @@
     return expenseCreatedAt(e);
   }
 
-  var EXPENSE_NAME_SUGGEST_MS = 30 * 24 * 60 * 60 * 1000;
-
+  /** Gợi ý tên khoản: mọi tên đã nhập cùng danh mục (toàn bộ lịch sử). */
   function getExpenseNameSuggestionsForCategory(categoryId) {
     if (!categoryId || !categoryIdExists(categoryId)) return [];
-    var cutoff = nowTs() - EXPENSE_NAME_SUGGEST_MS;
     var counts = {};
+    var latestTs = {};
     forEachExpenseInApp(function (e) {
       if (isRowDeleted(e)) return;
       if (e.category !== categoryId) return;
-      if (expenseDateTs(e) < cutoff) return;
       var name = typeof e.name === "string" ? e.name.trim() : "";
       if (!name) return;
       counts[name] = (counts[name] || 0) + 1;
+      var ts = expenseDateTs(e) || expenseUpdatedAt(e) || 0;
+      if (!latestTs[name] || ts > latestTs[name]) latestTs[name] = ts;
     });
     return Object.keys(counts)
       .map(function (name) {
-        return { name: name, count: counts[name] };
+        return { name: name, count: counts[name], latestTs: latestTs[name] || 0 };
       })
       .sort(function (a, b) {
+        if (b.latestTs !== a.latestTs) return b.latestTs - a.latestTs;
         if (b.count !== a.count) return b.count - a.count;
         return a.name.localeCompare(b.name, "vi");
       })
       .map(function (x) {
         return x.name;
       });
+  }
+
+  /** Số tiền gần nhất của khoản cùng tên + danh mục (theo ngày chi / updatedAt). */
+  function getLatestAmountForExpenseName(categoryId, name) {
+    var nameTrim = typeof name === "string" ? name.trim() : "";
+    if (!categoryId || !nameTrim) return 0;
+    var bestAmt = 0;
+    var bestTs = -1;
+    forEachExpenseInApp(function (e) {
+      if (isRowDeleted(e)) return;
+      if (e.category !== categoryId) return;
+      var n = typeof e.name === "string" ? e.name.trim() : "";
+      if (n !== nameTrim) return;
+      var ts = expenseDateTs(e) || expenseUpdatedAt(e) || 0;
+      if (ts < bestTs) return;
+      if (typeof e.amount !== "number" || e.amount <= 0) return;
+      bestTs = ts;
+      bestAmt = Math.round(e.amount);
+    });
+    return bestAmt;
+  }
+
+  function applyExpenseNameSuggestion(ctx, name) {
+    if (!ctx || !ctx.input) return;
+    ctx.input.value = name;
+    var cat = ctx.category ? ctx.category.value : "";
+    var amt = getLatestAmountForExpenseName(cat, name);
+    if (amt > 0 && ctx.amount) {
+      ctx.amount.value = formatAsNganDisplay(amt);
+      updateAmountPreview(ctx.amount, ctx.amountPreview);
+    }
+    hideExpenseNameSuggestions(ctx);
+    if (ctx.amount) ctx.amount.focus();
+    else ctx.input.focus();
   }
 
   function hideExpenseNameSuggestions(ctx) {
@@ -6535,9 +6574,7 @@
       btn.textContent = name;
       btn.addEventListener("mousedown", function (ev) {
         ev.preventDefault();
-        ctx.input.value = name;
-        hideExpenseNameSuggestions(ctx);
-        ctx.input.focus();
+        applyExpenseNameSuggestion(ctx, name);
       });
       li.appendChild(btn);
       ctx.list.appendChild(li);
@@ -7943,7 +7980,6 @@
     hideAllExpenseNameSuggestions();
     elAmount.value = "";
     updateAmountPreview(elAmount, elExpensePreview);
-    resetAddExpenseDateInput();
     if (elExpenseFixed) elExpenseFixed.checked = false;
     if (elExpenseCreditCard) elExpenseCreditCard.checked = false;
     persistLocalNow();
