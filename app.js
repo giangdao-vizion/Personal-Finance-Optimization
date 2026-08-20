@@ -3766,6 +3766,7 @@
   var elCcTimelineEmpty = document.getElementById("cc-timeline-empty");
   var elCcTimelineList = document.getElementById("cc-timeline-list");
   var elSettingsThemeSelect = document.getElementById("settings-theme-select");
+  var elSettingsFixedSection = document.getElementById("settings-fixed-section");
   var elSettingsFixedList = document.getElementById("settings-fixed-templates-list");
   var elSettingsAddFixedPanel = document.getElementById("settings-add-fixed-panel");
   var elBtnSettingsShowAddFixed = document.getElementById("btn-settings-show-add-fixed");
@@ -4457,6 +4458,7 @@
       refreshAllCategorySelects();
       if (elSettingsAddFixedCategory) elSettingsAddFixedCategory.value = getFirstCategoryId();
     }
+    updateSettingsFixedSectionVisibility();
   }
 
   function reportJarCatExpandKey(jarKey, categoryId) {
@@ -6060,6 +6062,30 @@
     renderFixedTemplatesList();
   }
 
+  /** Số mẫu cố định còn hiệu lực (chưa soft-delete). */
+  function countLiveFixedTemplates() {
+    if (!Array.isArray(app.fixedTemplates)) return 0;
+    var n = 0;
+    var i;
+    for (i = 0; i < app.fixedTemplates.length; i++) {
+      if (app.fixedTemplates[i] && !isRowDeleted(app.fixedTemplates[i])) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Section Cài đặt → Khoản chi cố định: hiện khi đã có ít nhất một mẫu
+   * (hoặc đang mở form thêm). Soft-delete mẫu chỉ dừng tự thêm tháng hiện tại/tương lai.
+   */
+  function updateSettingsFixedSectionVisibility() {
+    if (!elSettingsFixedSection) return;
+    var addOpen = !!(elSettingsAddFixedPanel && !elSettingsAddFixedPanel.hidden);
+    var show = countLiveFixedTemplates() > 0 || addOpen;
+    elSettingsFixedSection.hidden = !show;
+    if (show) elSettingsFixedSection.removeAttribute("aria-hidden");
+    else elSettingsFixedSection.setAttribute("aria-hidden", "true");
+  }
+
   function renderFixedTemplatesInto(ul, showEdit) {
     if (!ul) return;
     ul.innerHTML = "";
@@ -6157,8 +6183,9 @@
   }
 
   function renderFixedTemplatesList() {
+    updateSettingsFixedSectionVisibility();
     renderFixedTemplatesInto(elFixedTemplatesList, false);
-    if (elSettingsFixedList && !elSettingsFixedList.closest("[hidden]")) {
+    if (elSettingsFixedList && elSettingsFixedSection && !elSettingsFixedSection.hidden) {
       renderFixedTemplatesInto(elSettingsFixedList, true);
     }
   }
