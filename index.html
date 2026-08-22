@@ -181,6 +181,13 @@
         </span>
       </summary>
       <div class="collapsible-panel">
+      <div id="expense-today-reminder" class="expense-today-reminder" hidden aria-hidden="true" role="status">
+        <p class="expense-today-reminder-text">
+          Chưa có khoản chi nào được nhập
+          <button type="button" id="expense-today-reminder-link" class="expense-today-reminder-link">hôm nay</button>,
+          cùng nhập ngay để ko bị quên nhé!
+        </p>
+      </div>
       <form id="expense-form" class="expense-form">
         <div class="expense-form-top-row">
           <label class="field expense-form-name-field">
@@ -256,7 +263,7 @@
       </div>
     </details>
 
-    <section class="card list-card" aria-labelledby="table-heading">
+    <section class="card list-card" id="expense-list-section" aria-labelledby="table-heading">
       <div class="table-head">
         <h2 id="table-heading" class="card-title">Danh sách chi tiêu</h2>
       </div>

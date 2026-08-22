@@ -3666,10 +3666,13 @@
   var elAmount = document.getElementById("expense-amount");
   var elExpensePreview = document.getElementById("expense-amount-preview");
   var elForm = document.getElementById("expense-form");
+  var elExpenseTodayReminder = document.getElementById("expense-today-reminder");
+  var elExpenseTodayReminderLink = document.getElementById("expense-today-reminder-link");
   var elExpenseDate = document.getElementById("expense-date");
   var elExpenseTime = document.getElementById("expense-time");
   var elExpenseFixed = document.getElementById("expense-fixed");
   var elExpenseList = document.getElementById("expense-list");
+  var elExpenseListSection = document.getElementById("expense-list-section");
   var elEmpty = document.getElementById("empty-state");
   var elExpenseFilterAll = document.getElementById("expense-filter-all");
   var elExpenseFilterFixed = document.getElementById("expense-filter-fixed");
@@ -5747,6 +5750,63 @@
     return map;
   }
 
+  /** Số khoản chi (chưa xóa) theo ngày trong tháng đang xem. */
+  function expenseCountByDayInActiveMonth() {
+    var map = {};
+    if (!state || !activeMonthKey || !Array.isArray(state.expenses)) return map;
+    var prefix = activeMonthKey + "-";
+    state.expenses.forEach(function (e) {
+      if (isRowDeleted(e)) return;
+      var key = dayKeyFromTs(expenseDateTs(e));
+      if (!key || key.indexOf(prefix) !== 0) return;
+      map[key] = (map[key] || 0) + 1;
+    });
+    return map;
+  }
+
+  function todayDayKeyInActiveMonth() {
+    if (!activeMonthKey || activeMonthKey !== currentMonthKey()) return "";
+    return dayKeyFromTs(nowTs());
+  }
+
+  function todayDayNumInActiveMonth() {
+    var key = todayDayKeyInActiveMonth();
+    if (!key) return null;
+    var rest = key.slice(activeMonthKey.length + 1);
+    var dn = parseInt(rest, 10);
+    return isNaN(dn) || dn < 1 ? null : dn;
+  }
+
+  function countExpensesOnDayKey(dayKey) {
+    if (!dayKey || !state || !Array.isArray(state.expenses)) return 0;
+    var n = 0;
+    state.expenses.forEach(function (e) {
+      if (isRowDeleted(e)) return;
+      if (dayKeyFromTs(expenseDateTs(e)) === dayKey) n++;
+    });
+    return n;
+  }
+
+  function renderTodayExpenseReminder() {
+    if (!elExpenseTodayReminder) return;
+    var todayKey = todayDayKeyInActiveMonth();
+    var show = !!todayKey && countExpensesOnDayKey(todayKey) === 0;
+    elExpenseTodayReminder.hidden = !show;
+    if (show) elExpenseTodayReminder.removeAttribute("aria-hidden");
+    else elExpenseTodayReminder.setAttribute("aria-hidden", "true");
+  }
+
+  function scrollToExpenseListAndSelectToday() {
+    if (activeMonthKey !== currentMonthKey()) return;
+    var todayNum = todayDayNumInActiveMonth();
+    if (todayNum == null) return;
+    setExpenseListDayNumFilter(todayNum);
+    var target = elExpenseListSection || document.getElementById("table-heading");
+    if (target && target.scrollIntoView) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
   function monthDayKeys(monthKey) {
     var p = parseMonthKeyParts(monthKey);
     if (!p) return [];
@@ -6247,6 +6307,8 @@
     ) {
       expenseListFilterDayNum = null;
     }
+    var countsByDay = expenseCountByDayInActiveMonth();
+    var todayNum = todayDayNumInActiveMonth();
     var seal = (activeMonthKey || "") + ":" + dim;
     if (expenseListDayGridSeal !== seal) {
       expenseListDayGridSeal = seal;
@@ -6269,7 +6331,18 @@
       var b = buttons[i];
       var dn = parseInt(b.dataset.dayNum, 10);
       var on = sel !== null && !isNaN(dn) && dn === sel;
+      var dayKey =
+        activeMonthKey &&
+        !isNaN(dn) &&
+        dn >= 1 &&
+        dn <= dim
+          ? activeMonthKey + "-" + String(dn).padStart(2, "0")
+          : "";
+      var hasExpenses = !!(dayKey && countsByDay[dayKey] > 0);
+      var isToday = todayNum !== null && dn === todayNum;
       b.classList.toggle("is-selected", on);
+      b.classList.toggle("is-empty", !hasExpenses);
+      b.classList.toggle("is-today", isToday);
       b.setAttribute("aria-pressed", on ? "true" : "false");
     }
   }
@@ -7361,6 +7434,7 @@
 
   function renderAllViews() {
     renderSummary();
+    renderTodayExpenseReminder();
     renderExpenseList();
     renderReportModeButtons();
     if (reportMode === "daily") {
@@ -8032,6 +8106,11 @@
     });
   }
 
+  if (elExpenseTodayReminderLink) {
+    elExpenseTodayReminderLink.addEventListener("click", function () {
+      scrollToExpenseListAndSelectToday();
+    });
+  }
   if (elExpenseFilterAll) {
     elExpenseFilterAll.addEventListener("click", function () {
       setExpenseFilter("all");

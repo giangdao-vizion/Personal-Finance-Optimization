@@ -2545,6 +2545,44 @@ select:focus-visible {
   min-width: 0;
 }
 
+.expense-today-reminder {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid rgba(52, 195, 160, 0.32);
+  background: var(--accent-soft);
+}
+
+.expense-today-reminder-text {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.expense-today-reminder-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text, #34c3a0);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+  cursor: pointer;
+}
+
+.expense-today-reminder-link:hover {
+  opacity: 0.88;
+}
+
+.expense-today-reminder-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .expense-day-filter-actions {
   display: inline-flex;
   align-items: center;
@@ -2665,13 +2703,29 @@ select:focus-visible {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm, 8px);
   background: var(--bg-elevated);
-  color: var(--muted);
+  color: var(--text);
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.expense-day-grid-btn.is-empty {
+  background: color-mix(in srgb, var(--bg-elevated) 72%, var(--muted) 28%);
+  border-color: color-mix(in srgb, var(--border-strong) 70%, transparent);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.expense-day-grid-btn.is-today {
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 35%, transparent);
+}
+
+.expense-day-grid-btn.is-empty.is-today {
+  font-weight: 800;
 }
 
 .expense-day-grid-btn:hover {
