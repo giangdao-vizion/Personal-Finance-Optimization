@@ -3684,6 +3684,18 @@
   var elExpenseDayPickerBackdrop = document.getElementById("expense-day-picker-backdrop");
   var elExpenseDayPickerClose = document.getElementById("expense-day-picker-close");
   var elExpenseDayPickerDone = document.getElementById("expense-day-picker-done");
+  var elBtnQuickBulkEntry = document.getElementById("btn-quick-bulk-entry");
+  var elQuickBulkDialog = document.getElementById("quick-bulk-entry-dialog");
+  var elQuickBulkBackdrop = document.getElementById("quick-bulk-entry-backdrop");
+  var elQuickBulkClose = document.getElementById("quick-bulk-entry-close");
+  var elQuickBulkCancel = document.getElementById("quick-bulk-entry-cancel");
+  var elQuickBulkSubmit = document.getElementById("quick-bulk-entry-submit");
+  var elQuickBulkPills = document.getElementById("quick-bulk-entry-pills");
+  var elQuickBulkEmpty = document.getElementById("quick-bulk-entry-empty");
+  var elQuickBulkDayBar = document.getElementById("quick-bulk-entry-day-bar");
+  var quickBulkCandidates = [];
+  var quickBulkSelectedKeys = {};
+  var quickBulkSelectedDayKey = "";
   var elReportModeJars = document.getElementById("report-mode-jars");
   var elReportModeDaily = document.getElementById("report-mode-daily");
   var elReportPieView = document.getElementById("report-pie-view");
@@ -3979,6 +3991,7 @@
   function updateModalOpenBodyLock() {
     var open =
       (elExpenseDayPickerDialog && !elExpenseDayPickerDialog.hidden) ||
+      (elQuickBulkDialog && !elQuickBulkDialog.hidden) ||
       (elAuthDialog && !elAuthDialog.hidden) ||
       (elEditDialog && !elEditDialog.hidden) ||
       (elEditFixedDialog && !elEditFixedDialog.hidden) ||
@@ -3996,6 +4009,7 @@
   function openAuthDialog() {
     if (!elAuthDialog) return;
     closeExpenseDayPicker();
+    closeQuickBulkEntryDialog();
     setAuthError("");
     if (elAuthPassword) elAuthPassword.value = "";
     if (elAuthEmail && !elAuthEmail.value && supabaseUserEmail) elAuthEmail.value = supabaseUserEmail;
@@ -6276,6 +6290,7 @@
 
   function syncExpenseDayGridPanelUi() {
     if (elExpenseDayPickerDialog) {
+      if (expenseListDayGridExpanded) closeQuickBulkEntryDialog();
       elExpenseDayPickerDialog.hidden = !expenseListDayGridExpanded;
       elExpenseDayPickerDialog.setAttribute(
         "aria-hidden",
@@ -6804,6 +6819,299 @@
     var n = nowTs();
     if (elExpenseDate) elExpenseDate.value = formatDateInputValueFromTs(n);
     if (elExpenseTime) elExpenseTime.value = formatTimeInputValueFromTs(n);
+  }
+
+  function quickBulkItemKey(category, name) {
+    return String(category || "") + "\0" + String(name || "");
+  }
+
+  function forEachExpenseIncludingActiveMonth(fn) {
+    var seen = {};
+    function visit(e, dk) {
+      if (!e || !e.id || seen[e.id]) return;
+      seen[e.id] = true;
+      fn(e, dk);
+    }
+    forEachExpenseInApp(function (e, dk) {
+      visit(e, dk);
+    });
+    if (state && Array.isArray(state.expenses)) {
+      state.expenses.forEach(function (e) {
+        visit(e, expenseDayKeyFromRow(e));
+      });
+    }
+  }
+
+  /** Khoản linh hoạt trong 10 ngày gần nhất — gom theo danh mục + tên, lấy số tiền mới nhất. */
+  function getQuickBulkEntryCandidates() {
+    var todayKey = dayKeyFromTs(nowTs());
+    if (!todayKey) return [];
+    var minKey = dayKeyShift(todayKey, -9);
+    var map = {};
+    forEachExpenseIncludingActiveMonth(function (e) {
+      if (isRowDeleted(e)) return;
+      if (e.templateId) return;
+      if (!e.category || !categoryIdExists(e.category)) return;
+      if (typeof e.amount !== "number" || e.amount <= 0) return;
+      var dk = dayKeyFromTs(expenseDateTs(e));
+      if (!dk || dk < minKey || dk > todayKey) return;
+      var name = typeof e.name === "string" ? e.name.trim() : "";
+      var key = quickBulkItemKey(e.category, name);
+      var ts = expenseDateTs(e) || expenseUpdatedAt(e) || 0;
+      var prev = map[key];
+      if (prev && ts < prev.latestTs) return;
+      map[key] = {
+        key: key,
+        category: e.category,
+        name: name,
+        amount: Math.round(e.amount),
+        latestTs: ts,
+        isCreditCard: !!e.isCreditCard,
+      };
+    });
+    return Object.keys(map)
+      .map(function (k) {
+        return map[k];
+      })
+      .sort(function (a, b) {
+        if (b.latestTs !== a.latestTs) return b.latestTs - a.latestTs;
+        var an = a.name || getCategoryLabel(a.category);
+        var bn = b.name || getCategoryLabel(b.category);
+        return an.localeCompare(bn, "vi");
+      });
+  }
+
+  function defaultQuickBulkDayKey() {
+    var todayKey = dayKeyFromTs(nowTs());
+    if (activeMonthKey && todayKey && todayKey.indexOf(activeMonthKey + "-") === 0) {
+      return todayKey;
+    }
+    if (activeMonthKey) {
+      var parts = parseMonthKeyParts(activeMonthKey);
+      if (parts) {
+        var lastDay = new Date(parts.year, parts.month, 0).getDate();
+        var cur = currentMonthKey();
+        if (activeMonthKey > cur) {
+          return activeMonthKey + "-01";
+        }
+        return (
+          activeMonthKey +
+          "-" +
+          String(lastDay).padStart(2, "0")
+        );
+      }
+    }
+    return todayKey || "";
+  }
+
+  function getQuickBulkDayBarKeys() {
+    var todayKey = dayKeyFromTs(nowTs());
+    var keys = [];
+    var i;
+    if (activeMonthKey && todayKey && todayKey.indexOf(activeMonthKey + "-") === 0) {
+      for (i = 9; i >= 0; i--) {
+        var k = dayKeyShift(todayKey, -i);
+        if (k && k.indexOf(activeMonthKey + "-") === 0) keys.push(k);
+      }
+      return keys;
+    }
+    if (activeMonthKey) {
+      var parts = parseMonthKeyParts(activeMonthKey);
+      if (parts) {
+        var daysInMonth = new Date(parts.year, parts.month, 0).getDate();
+        var start = Math.max(1, daysInMonth - 9);
+        for (i = start; i <= daysInMonth; i++) {
+          keys.push(activeMonthKey + "-" + String(i).padStart(2, "0"));
+        }
+        return keys;
+      }
+    }
+    for (i = 9; i >= 0; i--) {
+      keys.push(dayKeyShift(todayKey, -i));
+    }
+    return keys.filter(Boolean);
+  }
+
+  function weekdayShortViFromDayKey(dayKey) {
+    var d = dateFromDayKey(dayKey);
+    if (!d) return "";
+    var names = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
+    return names[d.getDay()] || "";
+  }
+
+  function syncQuickBulkSubmitEnabled() {
+    if (!elQuickBulkSubmit) return;
+    var n = 0;
+    Object.keys(quickBulkSelectedKeys).forEach(function (k) {
+      if (quickBulkSelectedKeys[k]) n++;
+    });
+    elQuickBulkSubmit.disabled = n === 0 || !quickBulkSelectedDayKey;
+    elQuickBulkSubmit.textContent =
+      n > 0 ? "Nhập " + n + " khoản" : "Nhập";
+  }
+
+  function renderQuickBulkPills() {
+    if (!elQuickBulkPills) return;
+    elQuickBulkPills.innerHTML = "";
+    var hasItems = quickBulkCandidates.length > 0;
+    if (elQuickBulkEmpty) {
+      elQuickBulkEmpty.hidden = hasItems;
+    }
+    quickBulkCandidates.forEach(function (item) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "quick-bulk-pill";
+      btn.setAttribute("data-quick-bulk-key", item.key);
+      var selected = !!quickBulkSelectedKeys[item.key];
+      btn.classList.toggle("is-selected", selected);
+      btn.setAttribute("aria-pressed", selected ? "true" : "false");
+      var label = item.name || getCategoryLabel(item.category);
+      var sym = getCategoryIconSym(item.category);
+      btn.title = label + " · " + formatMoneyVND(item.amount);
+      btn.innerHTML =
+        '<span class="quick-bulk-pill-sym" aria-hidden="true"></span>' +
+        '<span class="quick-bulk-pill-label"></span>' +
+        '<span class="quick-bulk-pill-amount"></span>';
+      btn.querySelector(".quick-bulk-pill-sym").textContent = sym;
+      btn.querySelector(".quick-bulk-pill-label").textContent = label;
+      btn.querySelector(".quick-bulk-pill-amount").textContent =
+        formatMoneyListShort(item.amount);
+      elQuickBulkPills.appendChild(btn);
+    });
+    syncQuickBulkSubmitEnabled();
+  }
+
+  function renderQuickBulkDayBar() {
+    if (!elQuickBulkDayBar) return;
+    elQuickBulkDayBar.innerHTML = "";
+    var todayKey = dayKeyFromTs(nowTs());
+    var keys = getQuickBulkDayBarKeys();
+    if (!quickBulkSelectedDayKey || keys.indexOf(quickBulkSelectedDayKey) < 0) {
+      quickBulkSelectedDayKey =
+        keys.indexOf(todayKey) >= 0 ? todayKey : keys[keys.length - 1] || defaultQuickBulkDayKey();
+    }
+    var selectedBtn = null;
+    keys.forEach(function (dk) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "quick-bulk-day-btn";
+      btn.setAttribute("data-day-key", dk);
+      var selected = dk === quickBulkSelectedDayKey;
+      btn.classList.toggle("is-selected", selected);
+      btn.classList.toggle("is-today", dk === todayKey);
+      btn.setAttribute("aria-pressed", selected ? "true" : "false");
+      var d = dateFromDayKey(dk);
+      var dayNum = d ? String(d.getDate()).padStart(2, "0") : dk.slice(-2);
+      var sub =
+        dk === todayKey ? "nay" : weekdayShortViFromDayKey(dk);
+      btn.innerHTML =
+        '<span class="quick-bulk-day-btn-num"></span>' +
+        '<span class="quick-bulk-day-btn-sub"></span>';
+      btn.querySelector(".quick-bulk-day-btn-num").textContent = dayNum;
+      btn.querySelector(".quick-bulk-day-btn-sub").textContent = sub;
+      btn.setAttribute(
+        "aria-label",
+        (dk === todayKey ? "Hôm nay " : "") + dayLabelFromKey(dk)
+      );
+      elQuickBulkDayBar.appendChild(btn);
+      if (selected) selectedBtn = btn;
+    });
+    if (selectedBtn && typeof selectedBtn.scrollIntoView === "function") {
+      setTimeout(function () {
+        selectedBtn.scrollIntoView({
+          inline: "center",
+          block: "nearest",
+          behavior: "auto",
+        });
+      }, 0);
+    }
+    syncQuickBulkSubmitEnabled();
+  }
+
+  function openQuickBulkEntryDialog() {
+    if (!elQuickBulkDialog || !state) return;
+    cancelLimitEdit();
+    closeExpenseDayPicker();
+    closeEditExpenseDialog();
+    closeEditFixedTemplateDialog();
+    closeEditCategoryDialog();
+    closeEditJarDialog();
+    hideAllExpenseNameSuggestions();
+    quickBulkSelectedKeys = {};
+    quickBulkCandidates = getQuickBulkEntryCandidates();
+    quickBulkSelectedDayKey = defaultQuickBulkDayKey();
+    renderQuickBulkPills();
+    renderQuickBulkDayBar();
+    elQuickBulkDialog.hidden = false;
+    elQuickBulkDialog.setAttribute("aria-hidden", "false");
+    updateModalOpenBodyLock();
+    setTimeout(function () {
+      if (elQuickBulkClose) elQuickBulkClose.focus();
+      else if (elQuickBulkSubmit) elQuickBulkSubmit.focus();
+    }, 0);
+  }
+
+  function closeQuickBulkEntryDialog() {
+    if (!elQuickBulkDialog) return;
+    elQuickBulkDialog.hidden = true;
+    elQuickBulkDialog.setAttribute("aria-hidden", "true");
+    quickBulkSelectedKeys = {};
+    quickBulkCandidates = [];
+    quickBulkSelectedDayKey = "";
+    if (elQuickBulkPills) elQuickBulkPills.innerHTML = "";
+    if (elQuickBulkDayBar) elQuickBulkDayBar.innerHTML = "";
+    updateModalOpenBodyLock();
+  }
+
+  async function submitQuickBulkEntry() {
+    if (!state || !quickBulkSelectedDayKey) return;
+    var selected = quickBulkCandidates.filter(function (item) {
+      return !!quickBulkSelectedKeys[item.key];
+    });
+    if (!selected.length) return;
+    var targetMonth = quickBulkSelectedDayKey.slice(0, 7);
+    if (
+      targetMonth &&
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth) &&
+      targetMonth !== activeMonthKey
+    ) {
+      openMonth(targetMonth, { sync: false });
+    }
+    if (!state) return;
+    var timeStr = formatTimeInputValueFromTs(nowTs());
+    var baseTs = parseDateTimeInputsToTs(
+      quickBulkSelectedDayKey,
+      timeStr,
+      nowTs()
+    );
+    if (!(baseTs > 0)) {
+      baseTs = nowTs();
+    }
+    var firstId = null;
+    selected.forEach(function (item, idx) {
+      var rowTs = nowTs();
+      var row = {
+        id: uid(),
+        category: item.category,
+        name: item.name || "",
+        amount: item.amount,
+        dateTs: baseTs + idx,
+        createdAt: rowTs,
+        updatedAt: rowTs,
+      };
+      if (item.isCreditCard) row.isCreditCard = true;
+      state.expenses.push(row);
+      if (!firstId) firstId = row.id;
+    });
+    touchLocalData();
+    alignExpenseListDayFilterFromDayKey(quickBulkSelectedDayKey);
+    closeQuickBulkEntryDialog();
+    persistLocalNow();
+    await persistAndRenderAsync({
+      immediateSync: true,
+      sync: supabaseEnabled,
+    });
+    if (firstId) scrollAndHighlightExpenseRow(firstId);
   }
 
   function formatExpenseInputDate(e) {
@@ -8029,6 +8337,62 @@
     void submitAddExpenseForm();
   });
 
+  if (elBtnQuickBulkEntry) {
+    elBtnQuickBulkEntry.addEventListener("click", function () {
+      if (!state) return;
+      openQuickBulkEntryDialog();
+    });
+  }
+  if (elQuickBulkClose) {
+    elQuickBulkClose.addEventListener("click", closeQuickBulkEntryDialog);
+  }
+  if (elQuickBulkCancel) {
+    elQuickBulkCancel.addEventListener("click", closeQuickBulkEntryDialog);
+  }
+  if (elQuickBulkBackdrop) {
+    elQuickBulkBackdrop.addEventListener("click", closeQuickBulkEntryDialog);
+  }
+  if (elQuickBulkSubmit) {
+    elQuickBulkSubmit.addEventListener("click", function () {
+      void submitQuickBulkEntry();
+    });
+  }
+  if (elQuickBulkPills && !elQuickBulkPills._quickBulkDelegation) {
+    elQuickBulkPills._quickBulkDelegation = true;
+    elQuickBulkPills.addEventListener("click", function (ev) {
+      var t = ev.target.closest(".quick-bulk-pill");
+      if (!t || !elQuickBulkPills.contains(t)) return;
+      var key = t.getAttribute("data-quick-bulk-key");
+      if (!key) return;
+      if (quickBulkSelectedKeys[key]) delete quickBulkSelectedKeys[key];
+      else quickBulkSelectedKeys[key] = true;
+      t.classList.toggle("is-selected", !!quickBulkSelectedKeys[key]);
+      t.setAttribute(
+        "aria-pressed",
+        quickBulkSelectedKeys[key] ? "true" : "false"
+      );
+      syncQuickBulkSubmitEnabled();
+    });
+  }
+  if (elQuickBulkDayBar && !elQuickBulkDayBar._quickBulkDayDelegation) {
+    elQuickBulkDayBar._quickBulkDayDelegation = true;
+    elQuickBulkDayBar.addEventListener("click", function (ev) {
+      var t = ev.target.closest(".quick-bulk-day-btn");
+      if (!t || !elQuickBulkDayBar.contains(t)) return;
+      var dk = t.getAttribute("data-day-key");
+      if (!dk || dk === quickBulkSelectedDayKey) return;
+      quickBulkSelectedDayKey = dk;
+      var buttons = elQuickBulkDayBar.querySelectorAll(".quick-bulk-day-btn");
+      for (var i = 0; i < buttons.length; i++) {
+        var b = buttons[i];
+        var on = b.getAttribute("data-day-key") === dk;
+        b.classList.toggle("is-selected", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      syncQuickBulkSubmitEnabled();
+    });
+  }
+
   async function submitAddExpenseForm() {
     if (!state) return;
     var amount = parseMoneyToVND(elAmount.value);
@@ -8518,6 +8882,7 @@
     if (!state || !elEditDialog) return;
     cancelLimitEdit();
     closeExpenseDayPicker();
+    closeQuickBulkEntryDialog();
     closeEditFixedTemplateDialog();
     closeEditCategoryDialog();
     closeEditJarDialog();
@@ -8722,6 +9087,11 @@
       if (elExpenseDayPickerDialog && !elExpenseDayPickerDialog.hidden) {
         ev.preventDefault();
         closeExpenseDayPicker();
+        return;
+      }
+      if (elQuickBulkDialog && !elQuickBulkDialog.hidden) {
+        ev.preventDefault();
+        closeQuickBulkEntryDialog();
         return;
       }
       if (elEditJarDialog && !elEditJarDialog.hidden) {

@@ -61,6 +61,10 @@
     <symbol id="icon-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 21V9M7 14l5-5 5 5M5 3h14" />
     </symbol>
+    <!-- Nhập nhanh / hàng loạt: tia sét -->
+    <symbol id="icon-quick-bulk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M13 2L4 14h7l-1 8 10-12h-7l0-8z" />
+    </symbol>
     <!-- Piggy bank pictogram (SVG Repo); fill via currentColor on parent svg -->
     <symbol id="icon-piggy-bank" viewBox="0 0 512 512">
       <g fill="currentColor">
@@ -189,6 +193,19 @@
         </p>
       </div>
       <form id="expense-form" class="expense-form">
+        <div class="expense-quick-bulk-row">
+          <button
+            type="button"
+            id="btn-quick-bulk-entry"
+            class="expense-quick-bulk-btn"
+            aria-haspopup="dialog"
+            aria-controls="quick-bulk-entry-dialog"
+            title="Nhập nhanh nhiều khoản từ 10 ngày gần nhất"
+          >
+            <svg class="icon-svg" width="18" height="18" aria-hidden="true"><use href="#icon-quick-bulk" /></svg>
+            <span>Nhập nhanh</span>
+          </button>
+        </div>
         <div class="expense-form-top-row">
           <label class="field expense-form-name-field">
             <span class="field-label">Tên khoản</span>
@@ -995,6 +1012,50 @@
       ></div>
       <div class="modal-actions expense-day-picker-actions">
         <button type="button" id="expense-day-picker-done" class="btn btn-primary btn-block">Xong</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="quick-bulk-entry-dialog" class="modal" hidden aria-hidden="true">
+    <div class="modal-backdrop" id="quick-bulk-entry-backdrop" tabindex="-1"></div>
+    <div
+      class="modal-panel quick-bulk-entry-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="quick-bulk-entry-title"
+    >
+      <div class="quick-bulk-entry-head">
+        <h2 id="quick-bulk-entry-title" class="modal-title quick-bulk-entry-title">Nhập nhanh</h2>
+        <button type="button" id="quick-bulk-entry-close" class="btn-icon btn-icon-ghost" aria-label="Đóng">
+          <svg class="icon-svg" width="20" height="20" aria-hidden="true"><use href="#icon-close" /></svg>
+        </button>
+      </div>
+      <p class="field-hint quick-bulk-entry-hint">
+        Chọn các khoản từng nhập trong 10 ngày gần nhất, rồi nhập cùng lúc cho một ngày.
+      </p>
+      <div
+        id="quick-bulk-entry-pills"
+        class="quick-bulk-entry-pills"
+        role="group"
+        aria-label="Chọn khoản chi gần đây"
+      ></div>
+      <p id="quick-bulk-entry-empty" class="field-hint quick-bulk-entry-empty" hidden>
+        Chưa có khoản chi linh hoạt trong 10 ngày gần đây.
+      </p>
+      <div class="quick-bulk-entry-date-section">
+        <span class="field-label">Ngày nhập</span>
+        <div
+          id="quick-bulk-entry-day-bar"
+          class="quick-bulk-entry-day-bar"
+          role="group"
+          aria-label="Chọn ngày để nhập"
+        ></div>
+      </div>
+      <div class="modal-actions quick-bulk-entry-actions">
+        <button type="button" id="quick-bulk-entry-submit" class="btn btn-primary btn-block" disabled>
+          Nhập
+        </button>
+        <button type="button" id="quick-bulk-entry-cancel" class="btn btn-ghost btn-block">Hủy</button>
       </div>
     </div>
   </div>
