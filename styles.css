@@ -2192,6 +2192,46 @@ select:focus {
   max-width: 100%;
 }
 
+.expense-quick-bulk-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 0.7rem;
+}
+
+.expense-quick-bulk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 34px;
+  padding: 0.35rem 0.75rem 0.35rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--accent-text);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.expense-quick-bulk-btn:hover {
+  background: var(--accent-soft);
+  border-color: rgba(52, 195, 160, 0.45);
+}
+
+.expense-quick-bulk-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.expense-quick-bulk-btn .icon-svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 #expense-advanced-section {
   min-width: 0;
   width: 100%;
@@ -3434,6 +3474,186 @@ select:focus-visible {
 .edit-fixed-template-delete-btn:hover {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.quick-bulk-entry-panel {
+  max-height: min(92vh, 640px);
+  display: flex;
+  flex-direction: column;
+}
+
+.quick-bulk-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
+
+.quick-bulk-entry-title {
+  margin: 0;
+}
+
+.quick-bulk-entry-hint {
+  margin: 0 0 0.75rem;
+}
+
+.quick-bulk-entry-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  max-height: min(42vh, 280px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.1rem 0.05rem 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.quick-bulk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.quick-bulk-pill:hover {
+  background: var(--surface-press);
+}
+
+.quick-bulk-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.quick-bulk-pill.is-selected {
+  background: var(--accent-soft);
+  border-color: rgba(52, 195, 160, 0.5);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px rgba(52, 195, 160, 0.2);
+}
+
+.quick-bulk-pill-sym {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.quick-bulk-pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-bulk-pill-amount {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.92;
+}
+
+.quick-bulk-entry-empty {
+  margin: 0.25rem 0 0.85rem;
+}
+
+.quick-bulk-entry-date-section {
+  margin-top: auto;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+
+.quick-bulk-entry-date-section > .field-label {
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+.quick-bulk-entry-day-bar {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.15rem 0.05rem 0.35rem;
+  margin-bottom: 0.15rem;
+  scroll-snap-type: x proximity;
+}
+
+.quick-bulk-day-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.12rem;
+  min-width: 3.1rem;
+  min-height: 3.1rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
+  touch-action: manipulation;
+  scroll-snap-align: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.quick-bulk-day-btn:hover {
+  background: var(--surface-press);
+  color: var(--text);
+}
+
+.quick-bulk-day-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.quick-bulk-day-btn.is-today {
+  border-color: rgba(52, 195, 160, 0.4);
+}
+
+.quick-bulk-day-btn.is-selected {
+  background: var(--accent-soft);
+  border-color: rgba(52, 195, 160, 0.55);
+  color: var(--accent-text);
+}
+
+.quick-bulk-day-btn-num {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+}
+
+.quick-bulk-day-btn-sub {
+  font-size: 0.62rem;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.quick-bulk-entry-actions {
+  margin-top: 0.75rem;
+}
+
+.quick-bulk-entry-actions .btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (min-width: 480px) {
