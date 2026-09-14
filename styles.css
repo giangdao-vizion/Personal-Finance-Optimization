@@ -3645,7 +3645,6 @@ select:focus-visible {
   font-size: 0.62rem;
   font-weight: 500;
   opacity: 0.85;
-  text-transform: lowercase;
 }
 
 .quick-bulk-entry-actions {
