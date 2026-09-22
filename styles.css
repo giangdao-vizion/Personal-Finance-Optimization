@@ -3190,6 +3190,22 @@ select:focus-visible {
   overflow-x: hidden;
 }
 
+/* Mobile: popup sửa khoản chi cao ~95vh (bottom sheet) */
+@media (max-width: 479px) {
+  #edit-expense-dialog {
+    padding: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  #edit-expense-dialog .modal-panel {
+    width: 100%;
+    max-width: 100%;
+    height: 95vh;
+    max-height: 95vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+
 #edit-expense-dialog .modal-panel .field {
   min-width: 0;
   max-width: 100%;
