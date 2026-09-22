@@ -3193,7 +3193,7 @@ select:focus-visible {
 /* Mobile: popup sửa khoản chi ~95% màn hình, không tràn status bar */
 @media (max-width: 479px) {
   #edit-expense-dialog {
-    padding-top: max(5dvh, env(safe-area-inset-top, 0px));
+    padding-top: max(5svh, env(safe-area-inset-top, 0px));
     padding-right: 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
     padding-left: 0;
@@ -3203,10 +3203,14 @@ select:focus-visible {
     width: 100%;
     max-width: 100%;
     height: auto;
-    /* fallback cho trình duyệt chưa hỗ trợ dvh */
+    /* vh fallback → dvh → svh (ổn định nhất trên mobile browser chrome) */
     max-height: calc(95vh - env(safe-area-inset-top, 0px));
     max-height: calc(
       100dvh - max(5dvh, env(safe-area-inset-top, 0px)) -
+        env(safe-area-inset-bottom, 0px)
+    );
+    max-height: calc(
+      100svh - max(5svh, env(safe-area-inset-top, 0px)) -
         env(safe-area-inset-bottom, 0px)
     );
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
