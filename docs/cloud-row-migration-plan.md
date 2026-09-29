@@ -9,7 +9,7 @@ Cập nhật theo thảo luận sản phẩm / kiến trúc hiện tại (`featu
 | Phase | Trạng thái | Ghi chú |
 |-------|------------|---------|
 | A — An toàn forceLocal / import / wipe | **Đang làm trong app** | `cloudOverwriteWouldShrink`, confirm wipe/import cloud |
-| B — Schema + backfill SQL | **SQL sẵn** — chờ chạy trên Supabase | `supabase/migrations/…`, `supabase/scripts/backfill_…` |
+| B — Schema + backfill SQL | **SQL sẵn** — chờ chạy trên Supabase | `docs/sql/20260929_expenses_and_config_tables.pgsql`, `docs/sql/backfill_expenses_from_blob.pgsql` |
 | C — Dual-write + UI pending | Chưa | Sau khi B parity xanh |
 | D–F | Chưa | Theo exit criteria bên dưới |
 
