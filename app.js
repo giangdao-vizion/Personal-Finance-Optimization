@@ -22,6 +22,13 @@
   var expenseRowSyncInFlight = false;
   /** @type {Object.<string, "pending"|"syncing"|"error">} */
   var expenseRowSyncStatus = {};
+  /** Phase D: dual-write bảng config riêng (song song blob). */
+  var CONFIG_TABLE_SYNC_ENABLED = true;
+  var configTableSyncAvailable = true;
+  var configTableSyncInFlight = false;
+  /** dual = blob + rows; rows = chỉ bảng (Phase E); blob = legacy. */
+  var SYNC_ENGINE = "dual";
+  var lastExpenseParityResult = null;
   /** Có STORAGE_V2 nhưng chưa có V3 — chặn ghi local cho đến khi migrate. */
   var migrationPending = false;
   var MENU_MONTH_SPAN = 60;
@@ -2449,6 +2456,7 @@
     opts = opts || {};
     if (opts.configDirty) markConfigDirty();
     if (!migrationPending) persistLocalNow();
+    if (opts.configDirty) scheduleConfigTablesFlush();
     if (migrationPending || opts.sync === false) return;
     queueSupabaseSync(!!opts.immediateSync);
   }
@@ -2457,6 +2465,7 @@
     opts = opts || {};
     if (opts.configDirty) markConfigDirty();
     if (!migrationPending) persistLocalNow();
+    if (opts.configDirty) scheduleConfigTablesFlush();
     if (migrationPending || opts.sync === false) return;
     if (opts.immediateSync) {
       await syncToSupabaseNow({ pullAfter: true });
@@ -2712,8 +2721,24 @@
         isApplyingCloudSnapshot = false;
       }
       lastSyncedPayload = "";
+      await flushExpenseRowSyncQueue();
+      await flushConfigTablesToCloud();
       await syncToSupabaseNow({ pullAfter: true });
-      setAuthSyncHint("Đã đồng bộ hai chiều (gộp + lưu cloud).", "ok");
+      await pullExpenseRowsAndMerge();
+      await pullConfigTablesAndMerge();
+      if (activeMonthKey) {
+        state = buildMonthState(activeMonthKey);
+        renderAllViews();
+      }
+      var parity = await runExpenseParityCheck();
+      if (parity && parity.message) {
+        setAuthSyncHint(
+          (parity.ok ? "Đã đồng bộ. " : "Đã đồng bộ — ") + parity.message,
+          parity.ok ? "ok" : "error"
+        );
+      } else {
+        setAuthSyncHint("Đã đồng bộ hai chiều (gộp + lưu cloud).", "ok");
+      }
     } catch (e) {
       console.warn("manualCloudSync:", e);
       setAuthSyncHint("Đồng bộ thất bại.", "error");
@@ -3108,12 +3133,417 @@
     refreshExpenseRowSyncUi();
   }
 
+  function countLocalLiveExpensesByMonth() {
+    var byMonth = {};
+    var total = 0;
+    Object.keys(app.days || {}).forEach(function (dk) {
+      var shard = app.days[dk];
+      if (!shard || !Array.isArray(shard.expenses) || dk.length < 7) return;
+      var mk = dk.slice(0, 7);
+      shard.expenses.forEach(function (e) {
+        if (!e || isRowDeleted(e)) return;
+        byMonth[mk] = (byMonth[mk] || 0) + 1;
+        total += 1;
+      });
+    });
+    return { byMonth: byMonth, total: total };
+  }
+
+  /**
+   * So local live vs bảng expenses — Phase D giám sát parity.
+   * @returns {Promise<{ok:boolean, localLive:number, remoteLive:number, mismatches:Array, pending:number, message:string}>}
+   */
+  async function runExpenseParityCheck() {
+    var local = countLocalLiveExpensesByMonth();
+    var pending = readPendingExpenseRowIds().length;
+    var empty = {
+      ok: true,
+      localLive: local.total,
+      remoteLive: 0,
+      mismatches: [],
+      pending: pending,
+      message: "",
+    };
+    if (!EXPENSE_ROW_SYNC_ENABLED || !expenseRowSyncAvailable || !supabaseClient) {
+      empty.ok = false;
+      empty.message = "Parity: chưa bật/không dùng được bảng expenses.";
+      lastExpenseParityResult = empty;
+      return empty;
+    }
+    var userId = await getAuthUserId();
+    if (!userId) {
+      empty.ok = false;
+      empty.message = "Parity: chưa có user đăng nhập.";
+      lastExpenseParityResult = empty;
+      return empty;
+    }
+    try {
+      var res = await supabaseClient
+        .from(SUPABASE_EXPENSES_TABLE)
+        .select("month_key, deleted_at")
+        .eq("user_id", userId);
+      if (res.error) {
+        empty.ok = false;
+        empty.message = "Parity lỗi: " + res.error.message;
+        lastExpenseParityResult = empty;
+        return empty;
+      }
+      var remoteByMonth = {};
+      var remoteLive = 0;
+      (res.data || []).forEach(function (row) {
+        if (row.deleted_at) return;
+        var mk = row.month_key || "";
+        if (!mk) return;
+        remoteByMonth[mk] = (remoteByMonth[mk] || 0) + 1;
+        remoteLive += 1;
+      });
+      var mismatches = [];
+      var months = {};
+      Object.keys(local.byMonth).forEach(function (mk) {
+        months[mk] = true;
+      });
+      Object.keys(remoteByMonth).forEach(function (mk) {
+        months[mk] = true;
+      });
+      Object.keys(months)
+        .sort()
+        .forEach(function (mk) {
+          var l = local.byMonth[mk] || 0;
+          var r = remoteByMonth[mk] || 0;
+          if (l !== r) mismatches.push({ month: mk, local: l, remote: r });
+        });
+      var ok = mismatches.length === 0 && pending === 0;
+      var message;
+      if (ok) {
+        message =
+          "Parity OK: local " +
+          local.total +
+          " = cloud rows " +
+          remoteLive +
+          " khoản live.";
+      } else if (pending > 0 && mismatches.length === 0) {
+        message =
+          "Parity gần OK — còn " +
+          pending +
+          " khoản đang chờ sync (local " +
+          local.total +
+          ", cloud " +
+          remoteLive +
+          ").";
+        ok = false;
+      } else {
+        var sample = mismatches
+          .slice(0, 3)
+          .map(function (m) {
+            return m.month + " L" + m.local + "/C" + m.remote;
+          })
+          .join("; ");
+        message =
+          "Parity lệch: local " +
+          local.total +
+          " vs cloud " +
+          remoteLive +
+          (pending ? " (pending " + pending + ")" : "") +
+          (sample ? " — " + sample : "");
+      }
+      var result = {
+        ok: ok,
+        localLive: local.total,
+        remoteLive: remoteLive,
+        mismatches: mismatches,
+        pending: pending,
+        message: message,
+      };
+      lastExpenseParityResult = result;
+      return result;
+    } catch (e) {
+      empty.ok = false;
+      empty.message = "Parity lỗi: " + (e && e.message ? e.message : "unknown");
+      lastExpenseParityResult = empty;
+      return empty;
+    }
+  }
+
+  async function flushConfigTablesToCloud() {
+    if (!CONFIG_TABLE_SYNC_ENABLED || !configTableSyncAvailable) return;
+    if (!supabaseEnabled || !supabaseClient || configTableSyncInFlight) return;
+    if (SYNC_ENGINE === "blob") return;
+    var userId = await getAuthUserId();
+    if (!userId) return;
+    configTableSyncInFlight = true;
+    try {
+      var deviceId = getDeviceId();
+      var cfgAt = msToIso(app.configDataUpdatedAt || nowTs());
+
+      var monthRows = Object.keys(app.months || {}).map(function (mk) {
+        var m = app.months[mk] || {};
+        return {
+          user_id: userId,
+          month_key: mk,
+          income: typeof m.income === "number" ? Math.round(m.income) : 0,
+          income_user_set: !!m.incomeUserSet,
+          deleted_at:
+            typeof m.deletedAt === "number" && m.deletedAt > 0
+              ? msToIso(m.deletedAt)
+              : null,
+          updated_at: msToIso(m.dataUpdatedAt || app.configDataUpdatedAt || nowTs()),
+          device_id: deviceId,
+        };
+      });
+      if (monthRows.length) {
+        var mRes = await supabaseClient.from("month_meta").upsert(monthRows, {
+          onConflict: "user_id,month_key",
+        });
+        if (mRes.error) throw mRes.error;
+      }
+
+      var catRows = (app.categories || []).map(function (c, idx) {
+        var n = normalizeCategoryRow(c);
+        return {
+          id: n.id,
+          user_id: userId,
+          label: n.label,
+          icon_id: n.iconId || null,
+          jar_id: null,
+          sort_order: idx,
+          deleted_at: isRowDeleted(c) ? msToIso(c.deletedAt || nowTs()) : null,
+          updated_at: cfgAt,
+          device_id: deviceId,
+          extra: {},
+        };
+      });
+      if (catRows.length) {
+        var cRes = await supabaseClient.from("categories").upsert(catRows, {
+          onConflict: "user_id,id",
+        });
+        if (cRes.error) throw cRes.error;
+      }
+
+      var jarRows = (app.spendingJars || []).map(function (j, idx) {
+        var n = normalizeSpendingJarRow(j);
+        return {
+          id: n.id,
+          user_id: userId,
+          label: n.label,
+          percent: null,
+          sort_order: idx,
+          deleted_at: isRowDeleted(j) ? msToIso(j.deletedAt || nowTs()) : null,
+          updated_at: msToIso(n.updatedAt || nowTs()),
+          device_id: deviceId,
+          extra: {
+            color: n.color,
+            limitAmount: n.limitAmount,
+            categoryIds: n.categoryIds,
+          },
+        };
+      });
+      if (jarRows.length) {
+        var jRes = await supabaseClient.from("spending_jars").upsert(jarRows, {
+          onConflict: "user_id,id",
+        });
+        if (jRes.error) throw jRes.error;
+      }
+
+      var tmplRows = (app.fixedTemplates || []).map(function (t) {
+        return {
+          id: t.id,
+          user_id: userId,
+          category: t.category || null,
+          name: t.name || "",
+          amount: typeof t.amount === "number" ? Math.round(t.amount) : 0,
+          deleted_at: isRowDeleted(t) ? msToIso(t.deletedAt || nowTs()) : null,
+          updated_at: msToIso(fixedTemplateUpdatedAt(t) || nowTs()),
+          device_id: deviceId,
+          extra: {},
+        };
+      });
+      if (tmplRows.length) {
+        var tRes = await supabaseClient.from("fixed_templates").upsert(tmplRows, {
+          onConflict: "user_id,id",
+        });
+        if (tRes.error) throw tRes.error;
+      }
+
+      var s = normalizeSettings(app.settings || defaultSettings());
+      var sRes = await supabaseClient.from("user_settings").upsert(
+        {
+          user_id: userId,
+          default_limit:
+            typeof s.defaultLimit === "number" ? Math.round(s.defaultLimit) : 0,
+          credit_card: s.creditCard || {},
+          updated_at: cfgAt,
+          device_id: deviceId,
+          extra: {},
+        },
+        { onConflict: "user_id" }
+      );
+      if (sRes.error) throw sRes.error;
+
+      app.configNeedSync = false;
+    } catch (e) {
+      var msg = e && e.message ? e.message : String(e);
+      if (/does not exist|schema cache|42P01/i.test(msg)) {
+        configTableSyncAvailable = false;
+      }
+      console.warn("flushConfigTablesToCloud:", msg);
+    } finally {
+      configTableSyncInFlight = false;
+    }
+  }
+
+  function scheduleConfigTablesFlush() {
+    if (!CONFIG_TABLE_SYNC_ENABLED || !supabaseEnabled || SYNC_ENGINE === "blob") {
+      return;
+    }
+    void flushConfigTablesToCloud();
+  }
+
+  async function pullConfigTablesAndMerge() {
+    if (!CONFIG_TABLE_SYNC_ENABLED || !configTableSyncAvailable) return;
+    if (!supabaseEnabled || !supabaseClient || SYNC_ENGINE === "blob") return;
+    var userId = await getAuthUserId();
+    if (!userId) return;
+    try {
+      var monthsRes = await supabaseClient
+        .from("month_meta")
+        .select("*")
+        .eq("user_id", userId);
+      if (monthsRes.error) throw monthsRes.error;
+      (monthsRes.data || []).forEach(function (row) {
+        if (!row.month_key) return;
+        var local = app.months[row.month_key] || {};
+        var remoteAt = isoToMs(row.updated_at);
+        var localAt = local.dataUpdatedAt || 0;
+        if (local.needSync && localAt >= remoteAt) return;
+        if (remoteAt < localAt && !row.deleted_at) return;
+        app.months[row.month_key] = {
+          income: typeof row.income === "number" ? row.income : 0,
+          incomeUserSet: !!row.income_user_set,
+          dataUpdatedAt: remoteAt || nowTs(),
+          needSync: false,
+        };
+        if (row.deleted_at) {
+          app.months[row.month_key].deletedAt = isoToMs(row.deleted_at);
+        }
+      });
+
+      var catRes = await supabaseClient
+        .from("categories")
+        .select("*")
+        .eq("user_id", userId)
+        .order("sort_order", { ascending: true });
+      if (catRes.error) throw catRes.error;
+      if (catRes.data && catRes.data.length && !app.configNeedSync) {
+        app.categories = catRes.data
+          .filter(function (row) {
+            return !row.deleted_at;
+          })
+          .map(function (row) {
+            return normalizeCategoryRow({
+              id: row.id,
+              label: row.label,
+              iconId: row.icon_id,
+            });
+          });
+      }
+
+      var jarRes = await supabaseClient
+        .from("spending_jars")
+        .select("*")
+        .eq("user_id", userId)
+        .order("sort_order", { ascending: true });
+      if (jarRes.error) throw jarRes.error;
+      if (jarRes.data && jarRes.data.length && !app.configNeedSync) {
+        app.spendingJars = jarRes.data
+          .filter(function (row) {
+            return !row.deleted_at;
+          })
+          .map(function (row) {
+            var extra = row.extra && typeof row.extra === "object" ? row.extra : {};
+            return normalizeSpendingJarRow({
+              id: row.id,
+              label: row.label,
+              color: extra.color,
+              limitAmount: extra.limitAmount,
+              categoryIds: extra.categoryIds,
+              updatedAt: isoToMs(row.updated_at),
+            });
+          });
+      }
+
+      var tmplRes = await supabaseClient
+        .from("fixed_templates")
+        .select("*")
+        .eq("user_id", userId);
+      if (tmplRes.error) throw tmplRes.error;
+      if (tmplRes.data && tmplRes.data.length && !app.configNeedSync) {
+        var byId = {};
+        (app.fixedTemplates || []).forEach(function (t) {
+          if (t && t.id) byId[t.id] = t;
+        });
+        tmplRes.data.forEach(function (row) {
+          if (!row.id) return;
+          var remote = {
+            id: row.id,
+            category: row.category,
+            name: row.name || "",
+            amount: typeof row.amount === "number" ? row.amount : 0,
+            updatedAt: isoToMs(row.updated_at),
+          };
+          if (row.deleted_at) remote.deletedAt = isoToMs(row.deleted_at);
+          var local = byId[row.id];
+          if (!local) {
+            byId[row.id] = remote;
+            return;
+          }
+          var lAt = fixedTemplateUpdatedAt(local);
+          var rAt = remote.updatedAt || 0;
+          if (isRowDeleted(remote) && !isRowDeleted(local)) {
+            byId[row.id] = remote;
+          } else if (!isRowDeleted(remote) && isRowDeleted(local)) {
+            /* keep local tombstone if newer handled below */
+            if (rAt >= (local.deletedAt || lAt)) byId[row.id] = remote;
+          } else if (rAt >= lAt) {
+            byId[row.id] = remote;
+          }
+        });
+        app.fixedTemplates = Object.keys(byId).map(function (id) {
+          return byId[id];
+        });
+      }
+
+      var setRes = await supabaseClient
+        .from("user_settings")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (setRes.error) throw setRes.error;
+      if (setRes.data && !app.configNeedSync) {
+        var theme = app.settings && app.settings.themeMode;
+        app.settings = normalizeSettings({
+          defaultLimit: setRes.data.default_limit,
+          creditCard: setRes.data.credit_card,
+          themeMode: theme,
+        });
+      }
+
+      saveAppDataToLocal();
+    } catch (e) {
+      var msg = e && e.message ? e.message : String(e);
+      if (/does not exist|schema cache|42P01/i.test(msg)) {
+        configTableSyncAvailable = false;
+      }
+      console.warn("pullConfigTablesAndMerge:", msg);
+    }
+  }
+
   async function enableSupabaseSyncBySession(session) {
     if (!session || !session.user) return;
     supabaseEnabled = true;
     supabaseUserEmail = session.user.email || "";
-    // Push row queue trước, rồi blob — tránh pull đè mất pending local.
+    // Push row/config queue trước, rồi blob — tránh pull đè mất pending local.
     await flushExpenseRowSyncQueue();
+    await flushConfigTablesToCloud();
     var pendingPush = consumePendingCloudPush();
     if (pendingPush) {
       await syncToSupabaseNow({ forceLocal: true, skipFlush: true });
@@ -3122,6 +3552,7 @@
       await syncToSupabaseNow({ pullAfter: false });
     }
     await pullExpenseRowsAndMerge();
+    await pullConfigTablesAndMerge();
     if (activeMonthKey) {
       state = buildMonthState(activeMonthKey);
       renderAllViews();
@@ -3130,6 +3561,10 @@
     startCloudPoll();
     renderAuthUi();
     scheduleExpenseRowSyncFlush();
+    var parity = await runExpenseParityCheck();
+    if (parity && parity.message) {
+      setAuthSyncHint(parity.message, parity.ok ? "ok" : "error");
+    }
   }
 
   async function disableSupabaseSync() {
@@ -3151,11 +3586,17 @@
     attachSupabaseRealtime();
     void (async function () {
       await flushExpenseRowSyncQueue();
+      await flushConfigTablesToCloud();
       await syncToSupabaseNow({ pullAfter: true });
       await pullExpenseRowsAndMerge();
+      await pullConfigTablesAndMerge();
       if (activeMonthKey) {
         state = buildMonthState(activeMonthKey);
         renderAllViews();
+      }
+      var parity = await runExpenseParityCheck();
+      if (parity && parity.message) {
+        setAuthSyncHint(parity.message, parity.ok ? "ok" : "error");
       }
     })();
   }
