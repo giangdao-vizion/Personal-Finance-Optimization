@@ -26,18 +26,28 @@ declare
   live_blob int := 0;
   live_rows int := 0;
 begin
-  -- Chặn chạy khi chưa thay placeholder (tránh ghi nhầm user_id).
-  if target_user_text is null
-     or btrim(target_user_text) = ''
-     or target_user_text = 'PASTE_AUTH_USER_UUID_HERE'
-     or target_user_text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-  then
+  -- Chuẩn hóa paste (bỏ khoảng trắng / dấu ngoặc / CR) rồi ép kiểu uuid.
+  target_user_text := btrim(coalesce(target_user_text, ''));
+  target_user_text := trim(both '''' from target_user_text);
+  target_user_text := trim(both '"' from target_user_text);
+  target_user_text := regexp_replace(target_user_text, E'[\\r\\n\\t ]+', '', 'g');
+  -- Chuẩn hóa gạch ngang unicode (en/em dash) thành ASCII '-'
+  target_user_text := regexp_replace(target_user_text, E'[–—−‐‑]', '-', 'g');
+
+  if target_user_text = '' or target_user_text = 'PASTE_AUTH_USER_UUID_HERE' then
     raise exception
       'Hãy sửa target_user_text thành UUID auth thật trước khi chạy (hiện là %).',
       target_user_text;
   end if;
 
-  target := target_user_text::uuid;
+  begin
+    target := target_user_text::uuid;
+  exception
+    when invalid_text_representation then
+      raise exception
+        'target_user_text không phải UUID hợp lệ (hiện là %). Lấy User UID từ Authentication → Users.',
+        target_user_text;
+  end;
 
   select payload::jsonb into blob
   from public.family_budget_states
