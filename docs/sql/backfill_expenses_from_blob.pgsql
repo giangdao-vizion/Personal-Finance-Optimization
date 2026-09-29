@@ -1,17 +1,17 @@
 -- Backfill expenses + config tables from legacy blob family_budget_states.
--- Run AFTER 20260929_expenses_and_config_tables.sql
+-- Run AFTER docs/sql/20260929_expenses_and_config_tables.pgsql
 --
--- Replace TARGET_USER_ID with the auth.users uuid of the account that owns the data.
+-- BẮT BUỘC: sửa dòng target_user_text bên dưới thành UUID thật
+-- (Supabase → Authentication → Users → copy User UID).
 -- Preview parity counts before/after (see bottom).
 --
 -- Safe to re-run: upserts by primary key.
 
--- Example:
---   \set target_user 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-
 do $$
 declare
-  target uuid := 'TARGET_USER_ID'::uuid; -- << REPLACE
+  -- << REPLACE: dán UUID user sở hữu data (ví dụ 'a1b2c3d4-e5f6-7890-abcd-ef1234567890')
+  target_user_text text := 'PASTE_AUTH_USER_UUID_HERE';
+  target uuid;
   blob jsonb;
   day_key text;
   day_shard jsonb;
@@ -26,9 +26,18 @@ declare
   live_blob int := 0;
   live_rows int := 0;
 begin
-  if target = 'TARGET_USER_ID'::uuid then
-    raise exception 'Replace TARGET_USER_ID with a real auth.users uuid before running';
+  -- Chặn chạy khi chưa thay placeholder (tránh ghi nhầm user_id).
+  if target_user_text is null
+     or btrim(target_user_text) = ''
+     or target_user_text = 'PASTE_AUTH_USER_UUID_HERE'
+     or target_user_text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  then
+    raise exception
+      'Hãy sửa target_user_text thành UUID auth thật trước khi chạy (hiện là %).',
+      target_user_text;
   end if;
+
+  target := target_user_text::uuid;
 
   select payload::jsonb into blob
   from public.family_budget_states
@@ -228,8 +237,8 @@ begin
   raise notice 'Parity live expenses: blob≈% rows=% (compare manually per month if needed)', live_blob, live_rows;
 end $$;
 
--- Per-month parity helper (run after backfill; set user id):
+-- Per-month parity helper (run after backfill; thay UUID):
 -- select month_key, count(*) filter (where deleted_at is null) as live
 -- from public.expenses
--- where user_id = 'TARGET_USER_ID'::uuid
+-- where user_id = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'::uuid
 -- group by 1 order by 1;
