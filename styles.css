@@ -3356,6 +3356,36 @@ select:focus-visible {
   font-size: 0.75rem;
 }
 
+.expense-row-sync {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 2px solid rgba(148, 163, 184, 0.45);
+  border-top-color: var(--accent, #34c3a0);
+  box-sizing: border-box;
+}
+
+.expense-row-sync.is-syncing,
+.expense-row-sync.is-error.is-syncing {
+  animation: expense-row-sync-spin 0.7s linear infinite;
+}
+
+.expense-row-sync.is-error {
+  border-color: rgba(239, 68, 68, 0.35);
+  border-top-color: var(--danger, #ef4444);
+  animation: expense-row-sync-spin 0.7s linear infinite;
+}
+
+@keyframes expense-row-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .expense-row-actions {
   flex-shrink: 0;
   display: flex;

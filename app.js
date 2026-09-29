@@ -7,6 +7,21 @@
   var DATA_SCHEMA_VERSION = 3;
   /** Sau import offline: đăng nhập sẽ đẩy local lên cloud thay vì kéo cloud cũ xuống. */
   var STORAGE_PENDING_CLOUD_PUSH = "family-budget-pending-cloud-push";
+  /** Id thiết bị ổn định — gắn vào row sync. */
+  var STORAGE_DEVICE_ID = "family-budget-device-id";
+  /** Hàng đợi id khoản chi chờ upsert/delete lên bảng expenses. */
+  var STORAGE_PENDING_EXPENSE_ROWS = "family-budget-pending-expense-rows";
+  /** ISO timestamp lần pull expenses gần nhất. */
+  var STORAGE_EXPENSE_ROWS_PULLED_AT = "family-budget-expense-rows-pulled-at";
+  /**
+   * Phase C: dual-write từng khoản lên bảng public.expenses (song song blob).
+   * Tắt nếu bảng chưa có / RLS chặn.
+   */
+  var EXPENSE_ROW_SYNC_ENABLED = true;
+  var expenseRowSyncAvailable = true;
+  var expenseRowSyncInFlight = false;
+  /** @type {Object.<string, "pending"|"syncing"|"error">} */
+  var expenseRowSyncStatus = {};
   /** Có STORAGE_V2 nhưng chưa có V3 — chặn ghi local cho đến khi migrate. */
   var migrationPending = false;
   var MENU_MONTH_SPAN = 60;
@@ -17,6 +32,7 @@
     "sb_publishable_e6LA2cOnFrWPLXn_Oc1pdw_hHFAWPLx";
   var SUPABASE_TABLE = "family_budget_states";
   var SUPABASE_STATE_ID = "shared-default";
+  var SUPABASE_EXPENSES_TABLE = "expenses";
 
   /** Các biểu tượng có sẵn khi tạo / sửa danh mục */
   var ICON_PRESETS = [
@@ -1717,6 +1733,78 @@
     return found;
   }
 
+  /**
+   * Thống kê độ phủ dữ liệu — dùng chặn ghi đè cloud bằng bản “nghèo hơn”.
+   * @returns {{ liveExpenses: number, monthCount: number, monthKeys: Object }}
+   */
+  function summarizePayloadCoverage(payload) {
+    var p = coercePayloadToV3(payload || {});
+    var liveExpenses = 0;
+    var monthKeys = {};
+    Object.keys(p.days || {}).forEach(function (dk) {
+      var shard = p.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      var hasLive = false;
+      var i;
+      for (i = 0; i < shard.expenses.length; i++) {
+        if (!isRowDeleted(shard.expenses[i])) {
+          liveExpenses += 1;
+          hasLive = true;
+        }
+      }
+      if (hasLive && dk.length >= 7) monthKeys[dk.slice(0, 7)] = true;
+    });
+    Object.keys(p.months || {}).forEach(function (mk) {
+      var m = p.months[mk];
+      if (!m || typeof m !== "object") return;
+      if (typeof m.deletedAt === "number" && m.deletedAt > 0) return;
+      if ((typeof m.income === "number" && m.income > 0) || monthKeys[mk]) {
+        monthKeys[mk] = true;
+      }
+    });
+    return {
+      liveExpenses: liveExpenses,
+      monthCount: Object.keys(monthKeys).length,
+      monthKeys: monthKeys,
+    };
+  }
+
+  /** true nếu ghi đè cloud bằng local sẽ làm mất tháng hoặc giảm số khoản live. */
+  function cloudOverwriteWouldShrink(localPayload, remotePayload) {
+    if (!remotePayload) return false;
+    var local = summarizePayloadCoverage(localPayload);
+    var remote = summarizePayloadCoverage(remotePayload);
+    if (remote.liveExpenses <= 0 && remote.monthCount <= 0) return false;
+    var missingMonths = 0;
+    Object.keys(remote.monthKeys).forEach(function (mk) {
+      if (!local.monthKeys[mk]) missingMonths += 1;
+    });
+    if (missingMonths > 0) return true;
+    if (local.liveExpenses < remote.liveExpenses) return true;
+    if (local.monthCount < remote.monthCount) return true;
+    return false;
+  }
+
+  function formatCoverageHint(summary) {
+    var s = summary || { liveExpenses: 0, monthCount: 0 };
+    return s.liveExpenses + " khoản / " + s.monthCount + " tháng";
+  }
+
+  async function fetchRemoteCloudPayload() {
+    if (!supabaseClient) return null;
+    try {
+      var remoteRes = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select("payload")
+        .eq("id", SUPABASE_STATE_ID)
+        .maybeSingle();
+      if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
+        return remoteRes.data.payload;
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function fixedTemplateUpdatedAt(t) {
     if (!t || typeof t !== "object") return 0;
     var v = typeof t.updatedAt === "number" ? t.updatedAt : 0;
@@ -2203,9 +2291,10 @@
   }
 
   /**
-   * @param {{ forceLocal?: boolean, skipFlush?: boolean }} [opts]
+   * @param {{ forceLocal?: boolean, skipFlush?: boolean, pullAfter?: boolean, allowCloudShrink?: boolean }} [opts]
    * forceLocal: ghi đè cloud bằng payload local (sau import backup đầy đủ).
    * skipFlush: không ghi state tháng đang mở vào app.days trước sync (dùng sau import).
+   * allowCloudShrink: cho phép forceLocal khi local nghèo hơn remote (đã confirm UI).
    */
   async function syncToSupabaseNow(opts) {
     opts = opts || {};
@@ -2221,6 +2310,8 @@
       var remotePayload = null;
       var forceLocal = !!opts.forceLocal;
       var skipFlush = !!opts.skipFlush;
+      var allowCloudShrink = !!opts.allowCloudShrink;
+      var blockedForceLocal = false;
       try {
         var remoteRes = await supabaseClient
           .from(SUPABASE_TABLE)
@@ -2231,7 +2322,17 @@
         if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
           remotePayload = remoteRes.data.payload;
         }
-        if (forceLocal) {
+        if (
+          forceLocal &&
+          remotePayload &&
+          cloudOverwriteWouldShrink(localPayload, remotePayload) &&
+          !allowCloudShrink
+        ) {
+          // An toàn: không ghi đè cloud bằng bản nghèo hơn — merge thay thế.
+          blockedForceLocal = true;
+          forceLocal = false;
+          mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
+        } else if (forceLocal) {
           mergedPayload = coercePayloadToV3(localPayload);
         } else if (remotePayload) {
           mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
@@ -2246,6 +2347,12 @@
       var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
       if (!forceLocal && mergedSig && mergedSig === remoteSig) {
         lastSyncedPayload = mergedSig;
+        if (blockedForceLocal) {
+          setAuthSyncHint(
+            "Đã gộp với cloud (không ghi đè vì máy này ít dữ liệu hơn lịch sử trên cloud).",
+            "ok"
+          );
+        }
         return;
       }
       var res = await supabaseClient.from(SUPABASE_TABLE).upsert(
@@ -2270,10 +2377,17 @@
           saveAppDataToLocal();
           refreshMonthUiAfterCloudMerge();
         }
-        setAuthSyncHint(
-          forceLocal ? "Đã ghi đè cloud bằng dữ liệu trên máy này." : "Đã lưu lên cloud.",
-          "ok"
-        );
+        if (blockedForceLocal) {
+          setAuthSyncHint(
+            "Đã gộp với cloud (không ghi đè vì máy này ít dữ liệu hơn lịch sử trên cloud).",
+            "ok"
+          );
+        } else {
+          setAuthSyncHint(
+            forceLocal ? "Đã ghi đè cloud bằng dữ liệu trên máy này." : "Đã lưu lên cloud.",
+            "ok"
+          );
+        }
       } else {
         console.warn("Supabase sync failed:", res.error.message);
         setAuthSyncHint("Không ghi được cloud: " + res.error.message, "error");
@@ -2296,6 +2410,7 @@
       forceLocal: !!(a.forceLocal || b.forceLocal),
       skipFlush: !!(a.skipFlush || b.skipFlush),
       pullAfter: !!(a.pullAfter || b.pullAfter),
+      allowCloudShrink: !!(a.allowCloudShrink || b.allowCloudShrink),
     };
   }
 
@@ -2359,6 +2474,12 @@
   if (!Array.isArray(app.fixedTemplates)) app.fixedTemplates = defaultFixedTemplates();
   if (!app.settings || typeof app.settings !== "object") app.settings = defaultSettings();
   app.settings = normalizeSettings(app.settings);
+  // Khôi phục trạng thái spinner cho khoản đang chờ sync row (sau reload).
+  try {
+    readPendingExpenseRowIds().forEach(function (id) {
+      expenseRowSyncStatus[id] = "pending";
+    });
+  } catch (ePendingHydrate) {}
 
   function applyThemeSettings() {
     var root = document.documentElement;
@@ -2659,10 +2780,340 @@
       });
   }
 
+  function getDeviceId() {
+    try {
+      var existing = localStorage.getItem(STORAGE_DEVICE_ID);
+      if (existing && typeof existing === "string" && existing.length > 4) {
+        return existing;
+      }
+      var next = "dev-" + uid();
+      localStorage.setItem(STORAGE_DEVICE_ID, next);
+      return next;
+    } catch (e) {
+      return "dev-unknown";
+    }
+  }
+
+  function readPendingExpenseRowIds() {
+    try {
+      var raw = localStorage.getItem(STORAGE_PENDING_EXPENSE_ROWS);
+      if (!raw) return [];
+      var arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(function (id) {
+        return typeof id === "string" && id.length > 0;
+      });
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function writePendingExpenseRowIds(ids) {
+    try {
+      var uniq = [];
+      var seen = {};
+      (ids || []).forEach(function (id) {
+        if (!id || seen[id]) return;
+        seen[id] = true;
+        uniq.push(id);
+      });
+      if (uniq.length) localStorage.setItem(STORAGE_PENDING_EXPENSE_ROWS, JSON.stringify(uniq));
+      else localStorage.removeItem(STORAGE_PENDING_EXPENSE_ROWS);
+    } catch (e) {}
+  }
+
+  function enqueueExpenseRowSync(expenseId) {
+    if (!expenseId || !EXPENSE_ROW_SYNC_ENABLED) return;
+    var ids = readPendingExpenseRowIds();
+    if (ids.indexOf(expenseId) < 0) ids.push(expenseId);
+    writePendingExpenseRowIds(ids);
+    expenseRowSyncStatus[expenseId] = "pending";
+  }
+
+  function getExpenseRowSyncStatus(expenseId) {
+    return expenseId ? expenseRowSyncStatus[expenseId] || "" : "";
+  }
+
+  function findExpenseRecordById(expenseId) {
+    if (!expenseId || !app.days) return null;
+    var found = null;
+    Object.keys(app.days).forEach(function (dk) {
+      if (found) return;
+      var shard = app.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      var i;
+      for (i = 0; i < shard.expenses.length; i++) {
+        if (shard.expenses[i] && shard.expenses[i].id === expenseId) {
+          found = { expense: shard.expenses[i], dayKey: dk };
+          break;
+        }
+      }
+    });
+    if (!found && state && Array.isArray(state.expenses)) {
+      var j;
+      for (j = 0; j < state.expenses.length; j++) {
+        if (state.expenses[j] && state.expenses[j].id === expenseId) {
+          found = {
+            expense: state.expenses[j],
+            dayKey: dayKeyFromTs(expenseDateTs(state.expenses[j])),
+          };
+          break;
+        }
+      }
+    }
+    return found;
+  }
+
+  function msToIso(ms) {
+    var n = typeof ms === "number" && ms > 0 ? ms : nowTs();
+    try {
+      return new Date(n).toISOString();
+    } catch (e) {
+      return new Date().toISOString();
+    }
+  }
+
+  function isoToMs(iso) {
+    if (!iso) return 0;
+    var t = Date.parse(iso);
+    return isNaN(t) ? 0 : t;
+  }
+
+  function expenseToDbRow(expense, userId, dayKey) {
+    var e = normalizeExpenseRowForSync(expense || {});
+    var dk = dayKey || dayKeyFromTs(expenseDateTs(e));
+    if (!dk || dk.length < 10) dk = dayKeyFromTs(nowTs());
+    var updatedMs = expenseUpdatedAt(e) || nowTs();
+    var createdMs = expenseCreatedAtTs(e) || updatedMs;
+    var row = {
+      id: e.id,
+      user_id: userId,
+      device_id: getDeviceId(),
+      created_at: msToIso(createdMs),
+      updated_at: msToIso(updatedMs),
+      deleted_at: isRowDeleted(e) ? msToIso(e.deletedAt || updatedMs) : null,
+      day_key: dk,
+      month_key: dk.slice(0, 7),
+      category: e.category || null,
+      name: e.name || "",
+      amount: typeof e.amount === "number" ? Math.round(e.amount) : 0,
+      date_ts: typeof e.dateTs === "number" && e.dateTs > 0 ? Math.round(e.dateTs) : null,
+      template_id: e.templateId || null,
+      month_edited: e.monthEdited ? true : null,
+      is_credit_card: e.isCreditCard ? true : null,
+      extra: {},
+    };
+    return row;
+  }
+
+  function dbRowToExpense(row) {
+    if (!row || !row.id) return null;
+    var e = {
+      id: row.id,
+      category: row.category || "",
+      name: row.name || "",
+      amount: typeof row.amount === "number" ? row.amount : parseInt(row.amount, 10) || 0,
+      createdAt: isoToMs(row.created_at) || nowTs(),
+      updatedAt: isoToMs(row.updated_at) || nowTs(),
+    };
+    if (row.date_ts) e.dateTs = typeof row.date_ts === "number" ? row.date_ts : parseInt(row.date_ts, 10);
+    if (row.template_id) e.templateId = row.template_id;
+    if (row.month_edited) e.monthEdited = true;
+    if (row.is_credit_card) e.isCreditCard = true;
+    if (row.deleted_at) e.deletedAt = isoToMs(row.deleted_at) || nowTs();
+    return normalizeExpenseRowForSync(e);
+  }
+
+  async function getAuthUserId() {
+    if (!supabaseClient) return null;
+    try {
+      var res = await supabaseClient.auth.getUser();
+      return res && res.data && res.data.user ? res.data.user.id : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function refreshExpenseRowSyncUi() {
+    if (typeof renderExpenseList === "function" && elExpenseList) {
+      try {
+        renderExpenseList();
+      } catch (e) {}
+    }
+  }
+
+  async function upsertExpenseRowToCloud(expenseId) {
+    if (!EXPENSE_ROW_SYNC_ENABLED || !expenseRowSyncAvailable) return { ok: false };
+    if (!supabaseEnabled || !supabaseClient) return { ok: false };
+    var found = findExpenseRecordById(expenseId);
+    if (!found || !found.expense) {
+      return { ok: true, skipped: true };
+    }
+    var userId = await getAuthUserId();
+    if (!userId) return { ok: false, error: "no-user" };
+    var dbRow = expenseToDbRow(found.expense, userId, found.dayKey);
+    expenseRowSyncStatus[expenseId] = "syncing";
+    try {
+      var res = await supabaseClient.from(SUPABASE_EXPENSES_TABLE).upsert(dbRow, {
+        onConflict: "id",
+      });
+      if (res.error) {
+        if (
+          res.error.code === "42P01" ||
+          /does not exist|schema cache/i.test(res.error.message || "")
+        ) {
+          expenseRowSyncAvailable = false;
+        }
+        expenseRowSyncStatus[expenseId] = "error";
+        return { ok: false, error: res.error.message };
+      }
+      delete expenseRowSyncStatus[expenseId];
+      return { ok: true };
+    } catch (e) {
+      expenseRowSyncStatus[expenseId] = "error";
+      return { ok: false, error: e && e.message ? e.message : "upsert-failed" };
+    }
+  }
+
+  async function flushExpenseRowSyncQueue() {
+    if (!EXPENSE_ROW_SYNC_ENABLED || !expenseRowSyncAvailable) return;
+    if (!supabaseEnabled || !supabaseClient || expenseRowSyncInFlight) return;
+    var ids = readPendingExpenseRowIds();
+    if (!ids.length) return;
+    expenseRowSyncInFlight = true;
+    try {
+      var remaining = [];
+      var i;
+      for (i = 0; i < ids.length; i++) {
+        var id = ids[i];
+        var result = await upsertExpenseRowToCloud(id);
+        if (!result.ok && !result.skipped) remaining.push(id);
+      }
+      writePendingExpenseRowIds(remaining);
+      refreshExpenseRowSyncUi();
+    } finally {
+      expenseRowSyncInFlight = false;
+    }
+  }
+
+  function scheduleExpenseRowSyncFlush() {
+    if (!EXPENSE_ROW_SYNC_ENABLED || !supabaseEnabled) return;
+    void flushExpenseRowSyncQueue();
+  }
+
+  function applyRemoteExpenseRowToLocal(dbRow) {
+    var e = dbRowToExpense(dbRow);
+    if (!e || !e.id) return false;
+    var existing = findExpenseRecordById(e.id);
+    var merged = existing ? mergeExpenseRowForCloud(e, existing.expense) : e;
+    var targetDk =
+      dayKeyFromTs(expenseDateTs(merged)) ||
+      (dbRow.day_key && String(dbRow.day_key)) ||
+      (existing && existing.dayKey) ||
+      dayKeyFromTs(nowTs());
+    if (existing && existing.dayKey && existing.dayKey !== targetDk) {
+      var oldShard = app.days[existing.dayKey];
+      if (oldShard && Array.isArray(oldShard.expenses)) {
+        oldShard.expenses = oldShard.expenses.filter(function (x) {
+          return !x || x.id !== e.id;
+        });
+        markDayDirty(existing.dayKey);
+        if (oldShard.expenses.length === 0) delete app.days[existing.dayKey];
+      }
+    }
+    var shard = ensureDayShard(targetDk);
+    var idx = -1;
+    var i;
+    for (i = 0; i < shard.expenses.length; i++) {
+      if (shard.expenses[i] && shard.expenses[i].id === e.id) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) shard.expenses[idx] = merged;
+    else shard.expenses.push(merged);
+    markDayDirty(targetDk);
+    var assign = {};
+    assign[e.id] = targetDk;
+    purgeExpenseIdsFromOtherDays(assign);
+    return true;
+  }
+
+  async function pullExpenseRowsAndMerge() {
+    if (!EXPENSE_ROW_SYNC_ENABLED || !expenseRowSyncAvailable) return;
+    if (!supabaseEnabled || !supabaseClient) return;
+    var userId = await getAuthUserId();
+    if (!userId) return;
+    try {
+      var since = null;
+      try {
+        since = localStorage.getItem(STORAGE_EXPENSE_ROWS_PULLED_AT);
+      } catch (e0) {}
+      var query = supabaseClient
+        .from(SUPABASE_EXPENSES_TABLE)
+        .select("*")
+        .eq("user_id", userId)
+        .order("updated_at", { ascending: true });
+      if (since) query = query.gt("updated_at", since);
+      var res = await query;
+      if (res.error) {
+        if (
+          res.error.code === "42P01" ||
+          /does not exist|schema cache/i.test(res.error.message || "")
+        ) {
+          expenseRowSyncAvailable = false;
+        }
+        console.warn("pull expenses:", res.error.message);
+        return;
+      }
+      var rows = res.data || [];
+      if (!rows.length) return;
+      var maxUpdated = since || "";
+      rows.forEach(function (row) {
+        applyRemoteExpenseRowToLocal(row);
+        if (row.updated_at && row.updated_at > maxUpdated) maxUpdated = row.updated_at;
+      });
+      dedupeExpensesAcrossDays(app.days);
+      if (maxUpdated) {
+        try {
+          localStorage.setItem(STORAGE_EXPENSE_ROWS_PULLED_AT, maxUpdated);
+        } catch (e1) {}
+      }
+      saveAppDataToLocal();
+      if (activeMonthKey) {
+        state = buildMonthState(activeMonthKey);
+      }
+    } catch (e) {
+      console.warn("pullExpenseRowsAndMerge:", e);
+    }
+  }
+
+  /**
+   * Local-first expense write: UI/local ngay, hàng đợi row sync + blob debounce.
+   */
+  function persistExpenseLocalAndQueueSync(expenseIds, renderOpts) {
+    persistLocalNow();
+    (expenseIds || []).forEach(function (id) {
+      enqueueExpenseRowSync(id);
+    });
+    var opts = renderOpts || {};
+    if (opts.skipRender) {
+      saveAppData({ sync: supabaseEnabled, immediateSync: false });
+    } else if (activeMonthKey && state) {
+      persistAndRender({ sync: supabaseEnabled, immediateSync: false });
+    } else {
+      saveAppData({ sync: supabaseEnabled, immediateSync: false });
+    }
+    scheduleExpenseRowSyncFlush();
+    refreshExpenseRowSyncUi();
+  }
+
   async function enableSupabaseSyncBySession(session) {
     if (!session || !session.user) return;
     supabaseEnabled = true;
     supabaseUserEmail = session.user.email || "";
+    // Push row queue trước, rồi blob — tránh pull đè mất pending local.
+    await flushExpenseRowSyncQueue();
     var pendingPush = consumePendingCloudPush();
     if (pendingPush) {
       await syncToSupabaseNow({ forceLocal: true, skipFlush: true });
@@ -2670,9 +3121,15 @@
       await pullSupabaseStateAndRender();
       await syncToSupabaseNow({ pullAfter: false });
     }
+    await pullExpenseRowsAndMerge();
+    if (activeMonthKey) {
+      state = buildMonthState(activeMonthKey);
+      renderAllViews();
+    }
     attachSupabaseRealtime();
     startCloudPoll();
     renderAuthUi();
+    scheduleExpenseRowSyncFlush();
   }
 
   async function disableSupabaseSync() {
@@ -2692,7 +3149,15 @@
   function resumeCloudSyncFromBackground() {
     if (!supabaseEnabled || !supabaseClient) return;
     attachSupabaseRealtime();
-    void syncToSupabaseNow({ pullAfter: true });
+    void (async function () {
+      await flushExpenseRowSyncQueue();
+      await syncToSupabaseNow({ pullAfter: true });
+      await pullExpenseRowsAndMerge();
+      if (activeMonthKey) {
+        state = buildMonthState(activeMonthKey);
+        renderAllViews();
+      }
+    })();
   }
 
   function createSupabaseClientIfNeeded() {
@@ -3489,8 +3954,16 @@
     ) {
       return;
     }
-    if (!confirm("Xác nhận lần cuối: bạn chắc chắn muốn xóa hết dữ liệu?")) {
+    if (!confirm("Xác nhận lần cuối: bạn chắc chắn muốn xóa hết dữ liệu trên máy này?")) {
       return;
+    }
+    var wipeCloud = false;
+    if (supabaseEnabled && supabaseClient) {
+      wipeCloud = confirm(
+        "Cũng xóa dữ liệu trên CLOUD?\n\n" +
+          "• Hủy / Không: chỉ xóa máy này — lịch sử trên cloud vẫn còn (khuyến nghị).\n" +
+          "• OK: ghi đè cloud bằng dữ liệu trống — máy khác cùng tài khoản sẽ mất lịch sử khi sync."
+      );
     }
     migrationPending = false;
     var preservedTheme = normalizeThemeMode(
@@ -3522,9 +3995,9 @@
     renderExportMonthPicker();
     refreshSettingsDefaultLimitDisplay();
     openMonth(currentMonthKey(), { skipUrl: true, sync: false });
-    if (supabaseEnabled && supabaseClient) {
+    if (wipeCloud && supabaseEnabled && supabaseClient) {
       try {
-        await syncToSupabaseNow({ forceLocal: true });
+        await syncToSupabaseNow({ forceLocal: true, allowCloudShrink: true });
         setSettingsDataStatus("Đã xóa toàn bộ dữ liệu trên máy và cloud.", "ok");
       } catch (syncErr) {
         console.warn("wipe cloud:", syncErr);
@@ -3534,7 +4007,12 @@
         );
       }
     } else {
-      setSettingsDataStatus("Đã xóa toàn bộ dữ liệu trên máy này.", "ok");
+      setSettingsDataStatus(
+        wipeCloud
+          ? "Đã xóa toàn bộ dữ liệu trên máy này."
+          : "Đã xóa dữ liệu trên máy này. Cloud vẫn giữ lịch sử cũ.",
+        "ok"
+      );
     }
     renderAllViews();
   }
@@ -3559,6 +4037,48 @@
     }
     var importMeta = nextData._importMeta || {};
     delete nextData._importMeta;
+    var importCoverage = summarizePayloadCoverage(nextData);
+    var overwriteCloud = false;
+    var allowCloudShrink = false;
+    if (supabaseEnabled && supabaseClient) {
+      var remotePayload = await fetchRemoteCloudPayload();
+      var remoteCoverage = summarizePayloadCoverage(remotePayload);
+      var wouldShrink = cloudOverwriteWouldShrink(nextData, remotePayload);
+      var cloudPrompt =
+        "Cũng ghi đè CLOUD bằng file import?\n\n" +
+        "File: " +
+        formatCoverageHint(importCoverage) +
+        "\nCloud đang có: " +
+        formatCoverageHint(remoteCoverage) +
+        "\n\n" +
+        (wouldShrink
+          ? "⚠ File ÍT dữ liệu hơn cloud — ghi đè sẽ MẤT tháng/khoản chỉ có trên cloud.\n\n"
+          : "") +
+        "• Hủy / Không: chỉ import máy này, cloud giữ nguyên (khuyến nghị nếu không chắc).\n" +
+        "• OK: ghi đè cloud bằng file này.";
+      overwriteCloud = confirm(cloudPrompt);
+      if (overwriteCloud && wouldShrink) {
+        allowCloudShrink = confirm(
+          "Xác nhận lần cuối: ghi đè cloud dù file ít hơn lịch sử cloud (" +
+            formatCoverageHint(remoteCoverage) +
+            " → " +
+            formatCoverageHint(importCoverage) +
+            ")?"
+        );
+        if (!allowCloudShrink) overwriteCloud = false;
+      }
+    } else {
+      // Offline: chỉ đánh dấu pending push nếu user muốn ghi đè cloud khi đăng nhập sau.
+      overwriteCloud = confirm(
+        "Bạn chưa đăng nhập cloud.\n\n" +
+          "File: " +
+          formatCoverageHint(importCoverage) +
+          "\n\n" +
+          "Khi đăng nhập sau, có ghi đè cloud bằng file này không?\n" +
+          "• Hủy / Không: chỉ lưu máy — đăng nhập sau sẽ gộp an toàn với cloud.\n" +
+          "• OK: lần đăng nhập sau sẽ cố ghi đè cloud (vẫn bị chặn nếu file nghèo hơn cloud)."
+      );
+    }
     var importMonthKey = replaceAppDataFromImport(nextData);
     var importDetail =
       importMeta.format === "v2"
@@ -3572,7 +4092,7 @@
           " khoản / " +
           (importMeta.dayCount || 0) +
           " ngày)";
-    if (supabaseEnabled && supabaseClient) {
+    if (supabaseEnabled && supabaseClient && overwriteCloud) {
       lastSyncedPayload = "";
       try {
         while (syncInFlight) {
@@ -3580,19 +4100,27 @@
             setTimeout(r, 40);
           });
         }
-        await syncToSupabaseNow({ forceLocal: true, skipFlush: true });
+        await syncToSupabaseNow({
+          forceLocal: true,
+          skipFlush: true,
+          allowCloudShrink: allowCloudShrink,
+        });
         while (syncInFlight || syncPending) {
           await new Promise(function (r) {
             setTimeout(r, 40);
           });
         }
         setSettingsDataStatus(
-          "Đã import" + importDetail + " và ghi đè cloud bằng file backup này.",
+          "Đã import" +
+            importDetail +
+            (allowCloudShrink
+              ? " và ghi đè cloud bằng file backup."
+              : " và đồng bộ cloud (gộp an toàn nếu file ít hơn lịch sử cloud)."),
           "ok"
         );
       } catch (syncErr) {
         console.warn("import cloud sync:", syncErr);
-        markPendingCloudPush();
+        if (overwriteCloud) markPendingCloudPush();
         setSettingsDataStatus(
           "Đã import local" +
             importDetail +
@@ -3600,12 +4128,24 @@
           "error"
         );
       }
-    } else {
+    } else if (!supabaseEnabled && overwriteCloud) {
       markPendingCloudPush();
       setSettingsDataStatus(
         "Đã import local" +
           importDetail +
-          ". Đăng nhập cloud — app sẽ tự ghi đè cloud bằng file vừa import.",
+          ". Đăng nhập cloud sau — app sẽ cố ghi đè cloud (bị chặn nếu file nghèo hơn lịch sử cloud).",
+        "ok"
+      );
+    } else {
+      try {
+        localStorage.removeItem(STORAGE_PENDING_CLOUD_PUSH);
+      } catch (eClear) {}
+      setSettingsDataStatus(
+        "Đã import local" +
+          importDetail +
+          (supabaseEnabled
+            ? ". Cloud không bị ghi đè — bấm «Đồng bộ cloud» để gộp an toàn nếu cần."
+            : ". Cloud không bị đánh dấu ghi đè."),
         "ok"
       );
     }
@@ -6454,6 +6994,20 @@
     var actions = document.createElement("div");
     actions.className = "expense-row-actions";
 
+    var syncSt = getExpenseRowSyncStatus(e.id);
+    if (syncSt === "pending" || syncSt === "syncing" || syncSt === "error") {
+      var syncEl = document.createElement("span");
+      syncEl.className =
+        "expense-row-sync" +
+        (syncSt === "error" ? " is-error" : " is-syncing");
+      syncEl.setAttribute(
+        "aria-label",
+        syncSt === "error" ? "Đồng bộ lỗi — sẽ thử lại" : "Đang đồng bộ cloud"
+      );
+      syncEl.title = syncSt === "error" ? "Đồng bộ lỗi" : "Đang đồng bộ";
+      actions.appendChild(syncEl);
+    }
+
     var btnEdit = document.createElement("button");
     btnEdit.type = "button";
     btnEdit.className = "btn-icon btn-icon-muted";
@@ -7088,6 +7642,7 @@
       baseTs = nowTs();
     }
     var firstId = null;
+    var newIds = [];
     selected.forEach(function (item, idx) {
       var rowTs = nowTs();
       var row = {
@@ -7101,16 +7656,13 @@
       };
       if (item.isCreditCard) row.isCreditCard = true;
       state.expenses.push(row);
+      newIds.push(row.id);
       if (!firstId) firstId = row.id;
     });
     touchLocalData();
     alignExpenseListDayFilterFromDayKey(quickBulkSelectedDayKey);
     closeQuickBulkEntryDialog();
-    persistLocalNow();
-    await persistAndRenderAsync({
-      immediateSync: true,
-      sync: supabaseEnabled,
-    });
+    persistExpenseLocalAndQueueSync(newIds);
     if (firstId) scrollAndHighlightExpenseRow(firstId);
   }
 
@@ -7778,7 +8330,7 @@
   function removeExpense(id) {
     if (!id) return;
     if (!applyExpenseTombstone(id)) return;
-    persistAndRender({ immediateSync: true });
+    persistExpenseLocalAndQueueSync([id]);
   }
 
   var EXPENSE_SWIPE_DELETE_PX = 64;
@@ -8447,11 +8999,7 @@
     updateAmountPreview(elAmount, elExpensePreview);
     if (elExpenseFixed) elExpenseFixed.checked = false;
     if (elExpenseCreditCard) elExpenseCreditCard.checked = false;
-    persistLocalNow();
-    await persistAndRenderAsync({
-      immediateSync: true,
-      sync: supabaseEnabled,
-    });
+    persistExpenseLocalAndQueueSync([row.id]);
     scrollAndHighlightExpenseRow(row.id);
   }
 
@@ -8678,7 +9226,8 @@
           renderExportMonthPicker();
           renderAllViews();
           if (supabaseEnabled && supabaseClient) {
-            void syncToSupabaseNow({ forceLocal: true });
+            // Merge an toàn — không forceLocal (tránh máy migrate đè mất lịch sử cloud phong phú hơn).
+            void syncToSupabaseNow({ pullAfter: true });
           }
         } else {
           setMigrationModalStatus(res.message, "error");
@@ -9069,7 +9618,7 @@
       }
     }
     closeEditExpenseDialog();
-    persistAndRender({ immediateSync: true });
+    persistExpenseLocalAndQueueSync([e.id]);
   }
 
   document.addEventListener("keydown", function (ev) {

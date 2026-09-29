@@ -335,12 +335,15 @@ Chỉ khoản có `isCreditCard: true` và chưa xóa được tính trong báo 
 | Hành động | Hành vi |
 |-----------|---------|
 | **Export** | Chọn một/nhiều tháng có dữ liệu; file JSON v3 gồm `days`, `months`, config, `exportedAt` |
-| **Import** | Ghi đè **toàn bộ** local; mở tháng phù hợp sau import |
-| **Xóa toàn bộ** | Xác nhận kép; xóa local storage |
+| **Import** | Ghi đè **toàn bộ** local; mở tháng phù hợp sau import; hỏi riêng trước khi ghi đè cloud |
+| **Xóa toàn bộ** | Xác nhận kép trên máy; hỏi riêng trước khi xóa cloud (mặc định giữ cloud) |
 
 **Sau import khi đã đăng nhập cloud**
 
-- Đẩy file lên cloud (`forceLocal`) hoặc đặt cờ `pending-cloud-push` để lần đăng nhập sau ghi đè cloud cũ.
+- App hỏi có ghi đè cloud không; nếu file ít tháng/khoản hơn cloud thì cần confirm thêm (`allowCloudShrink`).
+- Không confirm → chỉ import máy; cloud giữ nguyên (có thể «Đồng bộ cloud» để gộp an toàn).
+- Offline: chỉ đặt `pending-cloud-push` khi user chọn ghi đè cloud lúc đăng nhập sau.
+- `forceLocal` bị chặn tự động nếu local/file nghèo hơn remote và chưa `allowCloudShrink` → fallback **merge**.
 
 ---
 
