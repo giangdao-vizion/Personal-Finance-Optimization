@@ -363,6 +363,7 @@ Chỉ khoản có `isCreditCard: true` và chưa xóa được tính trong báo 
 - Tháng đang mở: **pin snapshot** trước sync để không mất khoản vừa nhập.
 - `visibilitychange` / `pagehide`: flush timer sync + `persistLocalNow` trước khi rời trang.
 - Trạng thái hiển thị trong side menu (local / đã sync / lỗi).
+- **Phase C/D (dual)**: thêm/sửa/xóa khoản → local-first + upsert bảng `expenses` (spinner trên row); blob vẫn debounce. Config dual-write sang `month_meta` / `categories` / `spending_jars` / `fixed_templates` / `user_settings`. Sau đăng nhập / «Đồng bộ cloud»: chạy `runExpenseParityCheck` (local live vs rows) và hiện kết quả ở `auth-sync-hint`.
 
 ---
 

@@ -8,10 +8,11 @@ Cập nhật theo thảo luận sản phẩm / kiến trúc hiện tại (`featu
 
 | Phase | Trạng thái | Ghi chú |
 |-------|------------|---------|
-| A — An toàn forceLocal / import / wipe | **Xong trong app** | `cloudOverwriteWouldShrink`, confirm wipe/import cloud |
-| B — Schema + backfill SQL | **Đã chạy trên Supabase** | ~814 khoản live / 5 tháng; config OK |
-| C — Dual-write + UI pending | **Đang làm trong app** | Local-first + queue `expenses` + spinner row; blob vẫn debounce |
-| D–F | Chưa | Theo exit criteria bên dưới |
+| A — An toàn forceLocal / import / wipe | **Xong** | `cloudOverwriteWouldShrink`, confirm wipe/import cloud |
+| B — Schema + backfill SQL | **Xong trên Supabase** | ~814 khoản live / 5 tháng; config OK |
+| C — Dual-write expenses + UI | **Xong** | Local-first + queue `expenses` + spinner; verified add/edit lên DB |
+| D — Parity + config dual-write | **Đang làm** | `runExpenseParityCheck` + dual-write bảng config; `SYNC_ENGINE=dual` |
+| E–F | Chưa | Cắt blob sau khi parity ổn định |
 
 ---
 
