@@ -8,9 +8,9 @@ Cập nhật theo thảo luận sản phẩm / kiến trúc hiện tại (`featu
 
 | Phase | Trạng thái | Ghi chú |
 |-------|------------|---------|
-| A — An toàn forceLocal / import / wipe | **Đang làm trong app** | `cloudOverwriteWouldShrink`, confirm wipe/import cloud |
-| B — Schema + backfill SQL | **SQL sẵn** — chờ chạy trên Supabase | `docs/sql/20260929_expenses_and_config_tables.pgsql`, `docs/sql/backfill_expenses_from_blob.pgsql` |
-| C — Dual-write + UI pending | Chưa | Sau khi B parity xanh |
+| A — An toàn forceLocal / import / wipe | **Xong trong app** | `cloudOverwriteWouldShrink`, confirm wipe/import cloud |
+| B — Schema + backfill SQL | **Đã chạy trên Supabase** | ~814 khoản live / 5 tháng; config OK |
+| C — Dual-write + UI pending | **Đang làm trong app** | Local-first + queue `expenses` + spinner row; blob vẫn debounce |
 | D–F | Chưa | Theo exit criteria bên dưới |
 
 ---
