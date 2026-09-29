@@ -688,7 +688,7 @@
           <div class="settings-data-head">
             <div>
               <p class="settings-data-title">Import Data</p>
-              <p class="field-hint settings-data-hint">Nhập file JSON đã export để ghi đè hoàn toàn dữ liệu tracking và cài đặt app trên máy này.</p>
+              <p class="field-hint settings-data-hint">Nhập file JSON đã export để ghi đè dữ liệu trên máy này. Nếu đã đăng nhập cloud, app sẽ hỏi riêng trước khi ghi đè cloud (chặn mặc định khi file ít hơn lịch sử cloud).</p>
             </div>
           </div>
           <input type="file" id="settings-import-file" accept="application/json,.json" hidden />
@@ -702,7 +702,7 @@
           <div class="settings-data-head">
             <div>
               <p class="settings-data-title">Xóa toàn bộ data</p>
-              <p class="field-hint settings-data-hint">Xóa hết dữ liệu chi tiêu và cài đặt trên máy này (có xác nhận kép). Nên export backup trước.</p>
+              <p class="field-hint settings-data-hint">Xóa hết dữ liệu trên máy này (xác nhận kép). Nếu đã đăng nhập cloud, app hỏi riêng trước khi xóa cloud — mặc định giữ lịch sử cloud.</p>
             </div>
           </div>
           <button type="button" id="btn-delete-all-data" class="btn btn-ghost btn-block settings-data-action-btn settings-data-danger-btn">

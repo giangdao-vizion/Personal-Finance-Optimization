@@ -1717,6 +1717,78 @@
     return found;
   }
 
+  /**
+   * Thống kê độ phủ dữ liệu — dùng chặn ghi đè cloud bằng bản “nghèo hơn”.
+   * @returns {{ liveExpenses: number, monthCount: number, monthKeys: Object }}
+   */
+  function summarizePayloadCoverage(payload) {
+    var p = coercePayloadToV3(payload || {});
+    var liveExpenses = 0;
+    var monthKeys = {};
+    Object.keys(p.days || {}).forEach(function (dk) {
+      var shard = p.days[dk];
+      if (!shard || !Array.isArray(shard.expenses)) return;
+      var hasLive = false;
+      var i;
+      for (i = 0; i < shard.expenses.length; i++) {
+        if (!isRowDeleted(shard.expenses[i])) {
+          liveExpenses += 1;
+          hasLive = true;
+        }
+      }
+      if (hasLive && dk.length >= 7) monthKeys[dk.slice(0, 7)] = true;
+    });
+    Object.keys(p.months || {}).forEach(function (mk) {
+      var m = p.months[mk];
+      if (!m || typeof m !== "object") return;
+      if (typeof m.deletedAt === "number" && m.deletedAt > 0) return;
+      if ((typeof m.income === "number" && m.income > 0) || monthKeys[mk]) {
+        monthKeys[mk] = true;
+      }
+    });
+    return {
+      liveExpenses: liveExpenses,
+      monthCount: Object.keys(monthKeys).length,
+      monthKeys: monthKeys,
+    };
+  }
+
+  /** true nếu ghi đè cloud bằng local sẽ làm mất tháng hoặc giảm số khoản live. */
+  function cloudOverwriteWouldShrink(localPayload, remotePayload) {
+    if (!remotePayload) return false;
+    var local = summarizePayloadCoverage(localPayload);
+    var remote = summarizePayloadCoverage(remotePayload);
+    if (remote.liveExpenses <= 0 && remote.monthCount <= 0) return false;
+    var missingMonths = 0;
+    Object.keys(remote.monthKeys).forEach(function (mk) {
+      if (!local.monthKeys[mk]) missingMonths += 1;
+    });
+    if (missingMonths > 0) return true;
+    if (local.liveExpenses < remote.liveExpenses) return true;
+    if (local.monthCount < remote.monthCount) return true;
+    return false;
+  }
+
+  function formatCoverageHint(summary) {
+    var s = summary || { liveExpenses: 0, monthCount: 0 };
+    return s.liveExpenses + " khoản / " + s.monthCount + " tháng";
+  }
+
+  async function fetchRemoteCloudPayload() {
+    if (!supabaseClient) return null;
+    try {
+      var remoteRes = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select("payload")
+        .eq("id", SUPABASE_STATE_ID)
+        .maybeSingle();
+      if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
+        return remoteRes.data.payload;
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function fixedTemplateUpdatedAt(t) {
     if (!t || typeof t !== "object") return 0;
     var v = typeof t.updatedAt === "number" ? t.updatedAt : 0;
@@ -2203,9 +2275,10 @@
   }
 
   /**
-   * @param {{ forceLocal?: boolean, skipFlush?: boolean }} [opts]
+   * @param {{ forceLocal?: boolean, skipFlush?: boolean, pullAfter?: boolean, allowCloudShrink?: boolean }} [opts]
    * forceLocal: ghi đè cloud bằng payload local (sau import backup đầy đủ).
    * skipFlush: không ghi state tháng đang mở vào app.days trước sync (dùng sau import).
+   * allowCloudShrink: cho phép forceLocal khi local nghèo hơn remote (đã confirm UI).
    */
   async function syncToSupabaseNow(opts) {
     opts = opts || {};
@@ -2221,6 +2294,8 @@
       var remotePayload = null;
       var forceLocal = !!opts.forceLocal;
       var skipFlush = !!opts.skipFlush;
+      var allowCloudShrink = !!opts.allowCloudShrink;
+      var blockedForceLocal = false;
       try {
         var remoteRes = await supabaseClient
           .from(SUPABASE_TABLE)
@@ -2231,7 +2306,17 @@
         if (!remoteRes.error && remoteRes.data && remoteRes.data.payload) {
           remotePayload = remoteRes.data.payload;
         }
-        if (forceLocal) {
+        if (
+          forceLocal &&
+          remotePayload &&
+          cloudOverwriteWouldShrink(localPayload, remotePayload) &&
+          !allowCloudShrink
+        ) {
+          // An toàn: không ghi đè cloud bằng bản nghèo hơn — merge thay thế.
+          blockedForceLocal = true;
+          forceLocal = false;
+          mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
+        } else if (forceLocal) {
           mergedPayload = coercePayloadToV3(localPayload);
         } else if (remotePayload) {
           mergedPayload = mergePayloadForCloud(remotePayload, localPayload);
@@ -2246,6 +2331,12 @@
       var remoteSig = remotePayload ? wirePayloadSignature(remotePayload) : "";
       if (!forceLocal && mergedSig && mergedSig === remoteSig) {
         lastSyncedPayload = mergedSig;
+        if (blockedForceLocal) {
+          setAuthSyncHint(
+            "Đã gộp với cloud (không ghi đè vì máy này ít dữ liệu hơn lịch sử trên cloud).",
+            "ok"
+          );
+        }
         return;
       }
       var res = await supabaseClient.from(SUPABASE_TABLE).upsert(
@@ -2270,10 +2361,17 @@
           saveAppDataToLocal();
           refreshMonthUiAfterCloudMerge();
         }
-        setAuthSyncHint(
-          forceLocal ? "Đã ghi đè cloud bằng dữ liệu trên máy này." : "Đã lưu lên cloud.",
-          "ok"
-        );
+        if (blockedForceLocal) {
+          setAuthSyncHint(
+            "Đã gộp với cloud (không ghi đè vì máy này ít dữ liệu hơn lịch sử trên cloud).",
+            "ok"
+          );
+        } else {
+          setAuthSyncHint(
+            forceLocal ? "Đã ghi đè cloud bằng dữ liệu trên máy này." : "Đã lưu lên cloud.",
+            "ok"
+          );
+        }
       } else {
         console.warn("Supabase sync failed:", res.error.message);
         setAuthSyncHint("Không ghi được cloud: " + res.error.message, "error");
@@ -2296,6 +2394,7 @@
       forceLocal: !!(a.forceLocal || b.forceLocal),
       skipFlush: !!(a.skipFlush || b.skipFlush),
       pullAfter: !!(a.pullAfter || b.pullAfter),
+      allowCloudShrink: !!(a.allowCloudShrink || b.allowCloudShrink),
     };
   }
 
@@ -3489,8 +3588,16 @@
     ) {
       return;
     }
-    if (!confirm("Xác nhận lần cuối: bạn chắc chắn muốn xóa hết dữ liệu?")) {
+    if (!confirm("Xác nhận lần cuối: bạn chắc chắn muốn xóa hết dữ liệu trên máy này?")) {
       return;
+    }
+    var wipeCloud = false;
+    if (supabaseEnabled && supabaseClient) {
+      wipeCloud = confirm(
+        "Cũng xóa dữ liệu trên CLOUD?\n\n" +
+          "• Hủy / Không: chỉ xóa máy này — lịch sử trên cloud vẫn còn (khuyến nghị).\n" +
+          "• OK: ghi đè cloud bằng dữ liệu trống — máy khác cùng tài khoản sẽ mất lịch sử khi sync."
+      );
     }
     migrationPending = false;
     var preservedTheme = normalizeThemeMode(
@@ -3522,9 +3629,9 @@
     renderExportMonthPicker();
     refreshSettingsDefaultLimitDisplay();
     openMonth(currentMonthKey(), { skipUrl: true, sync: false });
-    if (supabaseEnabled && supabaseClient) {
+    if (wipeCloud && supabaseEnabled && supabaseClient) {
       try {
-        await syncToSupabaseNow({ forceLocal: true });
+        await syncToSupabaseNow({ forceLocal: true, allowCloudShrink: true });
         setSettingsDataStatus("Đã xóa toàn bộ dữ liệu trên máy và cloud.", "ok");
       } catch (syncErr) {
         console.warn("wipe cloud:", syncErr);
@@ -3534,7 +3641,12 @@
         );
       }
     } else {
-      setSettingsDataStatus("Đã xóa toàn bộ dữ liệu trên máy này.", "ok");
+      setSettingsDataStatus(
+        wipeCloud
+          ? "Đã xóa toàn bộ dữ liệu trên máy này."
+          : "Đã xóa dữ liệu trên máy này. Cloud vẫn giữ lịch sử cũ.",
+        "ok"
+      );
     }
     renderAllViews();
   }
@@ -3559,6 +3671,48 @@
     }
     var importMeta = nextData._importMeta || {};
     delete nextData._importMeta;
+    var importCoverage = summarizePayloadCoverage(nextData);
+    var overwriteCloud = false;
+    var allowCloudShrink = false;
+    if (supabaseEnabled && supabaseClient) {
+      var remotePayload = await fetchRemoteCloudPayload();
+      var remoteCoverage = summarizePayloadCoverage(remotePayload);
+      var wouldShrink = cloudOverwriteWouldShrink(nextData, remotePayload);
+      var cloudPrompt =
+        "Cũng ghi đè CLOUD bằng file import?\n\n" +
+        "File: " +
+        formatCoverageHint(importCoverage) +
+        "\nCloud đang có: " +
+        formatCoverageHint(remoteCoverage) +
+        "\n\n" +
+        (wouldShrink
+          ? "⚠ File ÍT dữ liệu hơn cloud — ghi đè sẽ MẤT tháng/khoản chỉ có trên cloud.\n\n"
+          : "") +
+        "• Hủy / Không: chỉ import máy này, cloud giữ nguyên (khuyến nghị nếu không chắc).\n" +
+        "• OK: ghi đè cloud bằng file này.";
+      overwriteCloud = confirm(cloudPrompt);
+      if (overwriteCloud && wouldShrink) {
+        allowCloudShrink = confirm(
+          "Xác nhận lần cuối: ghi đè cloud dù file ít hơn lịch sử cloud (" +
+            formatCoverageHint(remoteCoverage) +
+            " → " +
+            formatCoverageHint(importCoverage) +
+            ")?"
+        );
+        if (!allowCloudShrink) overwriteCloud = false;
+      }
+    } else {
+      // Offline: chỉ đánh dấu pending push nếu user muốn ghi đè cloud khi đăng nhập sau.
+      overwriteCloud = confirm(
+        "Bạn chưa đăng nhập cloud.\n\n" +
+          "File: " +
+          formatCoverageHint(importCoverage) +
+          "\n\n" +
+          "Khi đăng nhập sau, có ghi đè cloud bằng file này không?\n" +
+          "• Hủy / Không: chỉ lưu máy — đăng nhập sau sẽ gộp an toàn với cloud.\n" +
+          "• OK: lần đăng nhập sau sẽ cố ghi đè cloud (vẫn bị chặn nếu file nghèo hơn cloud)."
+      );
+    }
     var importMonthKey = replaceAppDataFromImport(nextData);
     var importDetail =
       importMeta.format === "v2"
@@ -3572,7 +3726,7 @@
           " khoản / " +
           (importMeta.dayCount || 0) +
           " ngày)";
-    if (supabaseEnabled && supabaseClient) {
+    if (supabaseEnabled && supabaseClient && overwriteCloud) {
       lastSyncedPayload = "";
       try {
         while (syncInFlight) {
@@ -3580,19 +3734,27 @@
             setTimeout(r, 40);
           });
         }
-        await syncToSupabaseNow({ forceLocal: true, skipFlush: true });
+        await syncToSupabaseNow({
+          forceLocal: true,
+          skipFlush: true,
+          allowCloudShrink: allowCloudShrink,
+        });
         while (syncInFlight || syncPending) {
           await new Promise(function (r) {
             setTimeout(r, 40);
           });
         }
         setSettingsDataStatus(
-          "Đã import" + importDetail + " và ghi đè cloud bằng file backup này.",
+          "Đã import" +
+            importDetail +
+            (allowCloudShrink
+              ? " và ghi đè cloud bằng file backup."
+              : " và đồng bộ cloud (gộp an toàn nếu file ít hơn lịch sử cloud)."),
           "ok"
         );
       } catch (syncErr) {
         console.warn("import cloud sync:", syncErr);
-        markPendingCloudPush();
+        if (overwriteCloud) markPendingCloudPush();
         setSettingsDataStatus(
           "Đã import local" +
             importDetail +
@@ -3600,12 +3762,24 @@
           "error"
         );
       }
-    } else {
+    } else if (!supabaseEnabled && overwriteCloud) {
       markPendingCloudPush();
       setSettingsDataStatus(
         "Đã import local" +
           importDetail +
-          ". Đăng nhập cloud — app sẽ tự ghi đè cloud bằng file vừa import.",
+          ". Đăng nhập cloud sau — app sẽ cố ghi đè cloud (bị chặn nếu file nghèo hơn lịch sử cloud).",
+        "ok"
+      );
+    } else {
+      try {
+        localStorage.removeItem(STORAGE_PENDING_CLOUD_PUSH);
+      } catch (eClear) {}
+      setSettingsDataStatus(
+        "Đã import local" +
+          importDetail +
+          (supabaseEnabled
+            ? ". Cloud không bị ghi đè — bấm «Đồng bộ cloud» để gộp an toàn nếu cần."
+            : ". Cloud không bị đánh dấu ghi đè."),
         "ok"
       );
     }
@@ -8678,7 +8852,8 @@
           renderExportMonthPicker();
           renderAllViews();
           if (supabaseEnabled && supabaseClient) {
-            void syncToSupabaseNow({ forceLocal: true });
+            // Merge an toàn — không forceLocal (tránh máy migrate đè mất lịch sử cloud phong phú hơn).
+            void syncToSupabaseNow({ pullAfter: true });
           }
         } else {
           setMigrationModalStatus(res.message, "error");
